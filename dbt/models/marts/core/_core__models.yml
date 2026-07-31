@@ -1,0 +1,75 @@
+version: 2
+
+models:
+  - name: dim_customers
+    description: One row per customer, enriched with lifetime order stats.
+    columns:
+      - name: customer_id
+        tests:
+          - unique
+          - not_null
+
+  - name: dim_products
+    description: One row per product.
+    columns:
+      - name: product_id
+        tests:
+          - unique
+          - not_null
+
+  - name: dim_date
+    description: Calendar date spine from 2023-01-01 through one year ahead of today.
+    columns:
+      - name: date_day
+        tests:
+          - unique
+          - not_null
+
+  - name: fct_orders
+    description: >
+      One row per order. `revenue_minus_collected_variance` is non-zero
+      whenever recognized order revenue and actually-collected cash
+      diverge (refunds, failed payments) — the reconciliation signal that
+      the finance/revenue extension of this warehouse will build on.
+    columns:
+      - name: order_id
+        tests:
+          - unique
+          - not_null
+      - name: customer_id
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_customers')
+                field: customer_id
+      - name: order_amount
+        tests:
+          - not_negative
+      - name: amount_collected
+        tests:
+          - not_negative
+
+  - name: fct_order_items
+    description: One row per order line item, denormalized for product/category analysis.
+    columns:
+      - name: order_item_id
+        tests:
+          - unique
+          - not_null
+
+exposures:
+  - name: revenue_overview_dashboard
+    label: Revenue Overview Dashboard
+    type: dashboard
+    maturity: medium
+    url: https://github.com/DrAndrewGray/analytics-platform#dashboard
+    description: >
+      Executive-facing view of orders, revenue, and payment collection
+      health, built on fct_orders and dim_customers.
+    depends_on:
+      - ref('fct_orders')
+      - ref('dim_customers')
+    owner:
+      name: Andrew Gray
+      email: explorernotesyt@gmail.com

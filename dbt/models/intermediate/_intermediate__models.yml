@@ -1,0 +1,20 @@
+version: 2
+
+models:
+  - name: int_order_items_enriched
+    description: Order line items joined to their order and product context.
+    columns:
+      - name: order_item_id
+        tests:
+          - unique
+          - not_null
+
+  - name: int_order_payment_summary
+    description: >
+      One row per order summarizing all payment attempts against it —
+      the reconciliation building block for fct_orders.
+    columns:
+      - name: order_id
+        tests:
+          - unique
+          - not_null

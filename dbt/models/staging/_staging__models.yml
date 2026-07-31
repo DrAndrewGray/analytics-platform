@@ -1,0 +1,94 @@
+version: 2
+
+models:
+  - name: stg_customers
+    description: One row per customer, cleaned and renamed from the raw extract.
+    columns:
+      - name: customer_id
+        description: Primary key.
+        tests:
+          - unique
+          - not_null
+      - name: email
+        tests:
+          - unique
+          - not_null
+
+  - name: stg_products
+    description: One row per product, with margin derived from cost and price.
+    columns:
+      - name: product_id
+        tests:
+          - unique
+          - not_null
+      - name: unit_price
+        tests:
+          - not_null
+
+  - name: stg_orders
+    description: One row per order.
+    columns:
+      - name: order_id
+        tests:
+          - unique
+          - not_null
+      - name: customer_id
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_customers')
+                field: customer_id
+      - name: order_status
+        tests:
+          - accepted_values:
+              arguments:
+                values: ["completed", "cancelled", "refunded"]
+
+  - name: stg_order_items
+    description: One row per order line item.
+    columns:
+      - name: order_item_id
+        tests:
+          - unique
+          - not_null
+      - name: order_id
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_orders')
+                field: order_id
+      - name: product_id
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_products')
+                field: product_id
+      - name: line_amount
+        tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+
+  - name: stg_payments
+    description: One row per payment attempt against an order.
+    columns:
+      - name: payment_id
+        tests:
+          - unique
+          - not_null
+      - name: order_id
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_orders')
+                field: order_id
+      - name: payment_status
+        tests:
+          - accepted_values:
+              arguments:
+                values: ["succeeded", "failed", "refunded"]
