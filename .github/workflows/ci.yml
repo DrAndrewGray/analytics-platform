@@ -50,7 +50,7 @@ jobs:
         run: uv run ruff check .
 
       - name: Type check (pyright)
-        run: uv run pyright scripts
+        run: uv run pyright scripts tests
 
       - name: Lint SQL (sqlfluff)
         run: uv run sqlfluff lint dbt/models
@@ -61,14 +61,17 @@ jobs:
       - name: Ingest into raw schema
         run: uv run python scripts/ingest.py
 
+      - name: Run pytest
+        run: uv run pytest
+
       - name: Install dbt packages
         working-directory: dbt
         run: uv run dbt deps --profiles-dir .
 
       - name: dbt build (run + test + snapshot)
         working-directory: dbt
-        run: uv run dbt build --profiles-dir .
+        run: uv run dbt build --profiles-dir . --target ci
 
       - name: dbt source freshness
         working-directory: dbt
-        run: uv run dbt source freshness --profiles-dir .
+        run: uv run dbt source freshness --profiles-dir . --target ci

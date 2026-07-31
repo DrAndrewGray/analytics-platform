@@ -12,3 +12,12 @@ meridian_analytics:
       dbname: "{{ env_var('POSTGRES_DB', 'meridian') }}"
       schema: analytics
       threads: 4
+    ci:
+      type: postgres
+      host: "{{ env_var('POSTGRES_HOST', 'localhost') }}"
+      port: "{{ env_var('POSTGRES_PORT', '5432') | as_number }}"
+      user: "{{ env_var('POSTGRES_USER', 'meridian') }}"
+      password: "{{ env_var('POSTGRES_PASSWORD', 'meridian') }}"
+      dbname: "{{ env_var('POSTGRES_DB', 'meridian') }}"
+      schema: analytics_ci
+      threads: 4

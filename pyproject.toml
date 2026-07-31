@@ -5,6 +5,7 @@ description = "Synthetic-data analytics engineering portfolio project: ingestion
 requires-python = ">=3.11"
 dependencies = [
     "faker>=25.0.0",
+    "numpy>=1.26.0",
     "pandas>=2.2.0",
     "sqlalchemy>=2.0.0",
     "psycopg2-binary>=2.9.9",
@@ -17,7 +18,12 @@ dev = [
     "ruff>=0.16.0",
     "pyright>=1.1.400",
     "sqlfluff>=3.0.0",
+    "pytest>=8.0.0",
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
 
 [tool.ruff]
 line-length = 100

@@ -3,21 +3,13 @@ version: 2
 sources:
   - name: raw
     schema: raw
+    loaded_at_field: _loaded_at
+    freshness:
+      warn_after: {count: 1, period: day}
+      error_after: {count: 3, period: day}
     tables:
       - name: customers
-        loaded_at_field: "signup_date::timestamp"
-        freshness:
-          warn_after: {count: 60, period: day}
-          error_after: {count: 120, period: day}
       - name: products
       - name: orders
-        loaded_at_field: "order_date::timestamp"
-        freshness:
-          warn_after: {count: 14, period: day}
-          error_after: {count: 30, period: day}
       - name: order_items
       - name: payments
-        loaded_at_field: "payment_date::timestamp"
-        freshness:
-          warn_after: {count: 14, period: day}
-          error_after: {count: 30, period: day}

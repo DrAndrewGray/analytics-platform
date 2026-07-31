@@ -10,8 +10,10 @@ from __future__ import annotations
 import random
 from collections import defaultdict
 from datetime import timedelta
+from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 from faker import Faker
 
@@ -93,12 +95,17 @@ def generate_orders(fake: Faker, customers: pd.DataFrame) -> pd.DataFrame:
 
 
 def generate_order_items(orders: pd.DataFrame, products: pd.DataFrame) -> pd.DataFrame:
+    # DataFrame.sample() draws from numpy's RNG, not Python's `random` module.
+    # An explicit local Generator keeps this deterministic under the same
+    # SEED without depending on (or mutating) numpy's global random state.
+    rng = np.random.default_rng(SEED)
+
     rows = []
     order_item_id = 1
     active_products = products[products["is_active"]]
     for _, order in orders.iterrows():
         n_items = random.randint(1, 4)
-        chosen = active_products.sample(n=n_items, replace=True)
+        chosen = active_products.sample(n=n_items, replace=True, random_state=rng)
         for _, product in chosen.iterrows():
             discount = round(random.choice([0, 0, 0, 0.1, 0.15, 0.2]), 2)
             rows.append(
@@ -115,20 +122,32 @@ def generate_order_items(orders: pd.DataFrame, products: pd.DataFrame) -> pd.Dat
     return pd.DataFrame(rows)
 
 
+def _line_amount(quantity: int, unit_price: float, discount: float) -> Decimal:
+    return (
+        Decimal(quantity) * Decimal(str(unit_price)) * (Decimal("1") - Decimal(str(discount)))
+    ).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+
 def generate_payments(fake: Faker, orders: pd.DataFrame, order_items: pd.DataFrame) -> pd.DataFrame:
     # A plain dict aggregation rather than groupby(): pandas' type stubs
     # resolve groupby(...)[col].sum() to an unusably broad union of scalar
     # types, which isn't worth fighting for a one-off rollup like this.
-    order_totals: defaultdict[int, float] = defaultdict(float)
+    #
+    # Decimal, not float, for the rollup: float addition isn't associative,
+    # so summing the same rounded-per-line amounts in a different order (a
+    # Python loop here vs. Postgres' sum() in fct_orders) can land a cent
+    # away even when every input is identical. Decimal addition is exact,
+    # so this always agrees with the warehouse's own sum(line_amount).
+    order_totals: defaultdict[int, Decimal] = defaultdict(Decimal)
     for item in order_items.to_dict("records"):
-        order_totals[int(item["order_id"])] += (
-            float(item["quantity"]) * float(item["unit_price"]) * (1 - float(item["discount"]))
+        order_totals[int(item["order_id"])] += _line_amount(
+            item["quantity"], item["unit_price"], item["discount"]
         )
 
     rows = []
     payment_id = 1
     for order in orders.to_dict("records"):
-        amount = round(order_totals.get(int(order["order_id"]), 0.0), 2)
+        amount = float(order_totals.get(int(order["order_id"]), Decimal("0.00")))
         payment_date = order["order_date"] + timedelta(days=random.randint(0, 2))
         status = (
             "refunded"

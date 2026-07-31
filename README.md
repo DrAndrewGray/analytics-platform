@@ -70,9 +70,13 @@ easier to extend one aggregation model than to duplicate its logic.
   table-level invariant (total completed-order revenue can't be negative)
   rather than a per-row condition — demonstrates that not everything worth
   testing fits the generic-test, per-column shape.
-- **Source freshness** on `orders`, `payments`, and `customers` — flags
-  when the "extract" has gone stale, which matters more once this stops
-  being synthetic data regenerated on demand.
+- **Source freshness** on all five raw tables, based on a genuine
+  `_loaded_at` ingestion timestamp set by `scripts/ingest.py` — not on
+  business dates like `order_date`. Freshness should answer "how long
+  since this actually arrived through the pipeline," which a business
+  date can't tell you (an order placed a year ago that loaded five
+  minutes ago is fresh; using `order_date` for that check would say the
+  opposite).
 - **A snapshot** (`customers_snapshot`) using the `check` strategy on
   `region` and `email`, to demonstrate SCD Type 2 history capture even
   though the synthetic source is currently static between manual
@@ -94,12 +98,15 @@ docker compose ps   # wait for "healthy"
 uv run python scripts/generate_synthetic_data.py
 uv run python scripts/ingest.py
 
-# 4. Install dbt packages and build the warehouse
+# 4. Run the Python test suite (generator + ingestion tests)
+uv run pytest
+
+# 5. Install dbt packages and build the warehouse
 cd dbt
 uv run dbt deps --profiles-dir .
 uv run dbt build --profiles-dir .
 
-# 5. Explore the docs
+# 6. Explore the docs
 uv run dbt docs generate --profiles-dir .
 uv run dbt docs serve --profiles-dir .
 ```
@@ -112,11 +119,36 @@ it are skipped rather than built on top of bad data.
 
 - **ruff** — Python linting/formatting (`uv run ruff check .`)
 - **sqlfluff** — SQL linting for the dbt models (`uv run sqlfluff lint dbt/models`)
-- **pyright** — Python type checking (`uv run pyright scripts`)
+- **pyright** — Python type checking (`uv run pyright scripts tests`)
+- **pytest** — generator and ingestion tests (`uv run pytest`). The
+  ingestion tests need a reachable Postgres and skip themselves
+  otherwise. One of them is a regression test for a real bug: re-ingesting
+  used to `DROP TABLE`, which Postgres refuses once a dbt view depends on
+  it — ingestion now truncates instead, and the test recreates that exact
+  scenario (a view depending on `raw.customers`) to guard against it
+  coming back.
+
+## Environments
+
+`dbt/profiles.yml` defines two targets against the same Postgres:
+`dev` (schema `analytics`, for local work) and `ci` (schema
+`analytics_ci`, used by GitHub Actions). They're kept schema-isolated
+rather than sharing one, so a CI run can never leave behind state that
+affects local development, or vice versa.
 
 ## CI
 
 GitHub Actions spins up a real Postgres service container, regenerates
-the synthetic data fresh (so source freshness checks always pass), and
-runs `dbt build` on every push — the warehouse either builds and passes
-its tests, or the check fails. See `.github/workflows/ci.yml`.
+the synthetic data fresh (so source freshness checks always pass), runs
+the Python test suite, then runs `dbt build` against the `ci` target on
+every push — the warehouse either builds and passes its tests, or the
+check fails. See `.github/workflows/ci.yml`.
+
+## Roadmap
+
+This is Phase 1 of a larger, progressively-extended platform. Phase 2
+(subscription billing, MRR/NRR-style metrics, invoices, payments,
+refunds) is specced out in
+[`docs/roadmap/phase_2_subscription_spec.md`](docs/roadmap/phase_2_subscription_spec.md) —
+written, then deliberately deferred rather than folded into this phase,
+to keep Phase 1 scoped to a single, provable foundation.

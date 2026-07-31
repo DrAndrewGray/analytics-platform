@@ -9,6 +9,7 @@ retries, idempotency) is a separate, later portfolio project.
 from __future__ import annotations
 
 import os
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pandas as pd
@@ -34,6 +35,7 @@ def get_engine():
 
 def main() -> None:
     engine = get_engine()
+    loaded_at = datetime.now(UTC)
 
     with engine.begin() as conn:
         conn.execute(text("CREATE SCHEMA IF NOT EXISTS raw"))
@@ -45,6 +47,11 @@ def main() -> None:
                 f"{csv_path} not found — run scripts/generate_synthetic_data.py first"
             )
         df = pd.read_csv(csv_path)
+        # A genuine ingestion-time timestamp, distinct from business dates
+        # like order_date/signup_date. Source freshness should measure how
+        # long ago a row actually arrived through the pipeline, not what
+        # date the row's business data happens to reference.
+        df["_loaded_at"] = loaded_at
 
         # Truncate (not drop-and-recreate): dbt staging views reference these
         # tables directly, and Postgres refuses to drop a table that a view
