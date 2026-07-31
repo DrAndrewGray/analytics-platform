@@ -66,6 +66,17 @@ def main() -> None:
                 {"table": table},
             ).scalar()
             if table_exists:
+                # Tolerate a table created before _loaded_at existed (e.g. a
+                # persistent local volume from an earlier version of this
+                # script): without this, appending a DataFrame with a column
+                # the table doesn't have yet fails after the table has
+                # already been truncated.
+                conn.execute(
+                    text(
+                        f"alter table raw.{table} "
+                        "add column if not exists _loaded_at timestamptz"
+                    )
+                )
                 conn.execute(text(f"truncate table raw.{table}"))
 
         df.to_sql(table, engine, schema="raw", if_exists="append", index=False)
