@@ -54,6 +54,8 @@ def _reset_test_schema():
     with engine.begin() as conn:
         conn.execute(text(f"drop schema if exists {TEST_SCHEMA} cascade"))
     yield
+    with engine.begin() as conn:
+        conn.execute(text(f"drop schema if exists {TEST_SCHEMA} cascade"))
 
 
 def test_ingest_loads_expected_row_counts():
