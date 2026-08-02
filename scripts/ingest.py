@@ -15,6 +15,7 @@ from pathlib import Path
 import pandas as pd
 from dotenv import load_dotenv
 from sqlalchemy import create_engine, text
+from sqlalchemy.engine import Engine
 
 load_dotenv()
 
@@ -22,8 +23,10 @@ DATA_DIR = Path(__file__).resolve().parent.parent / "data" / "raw"
 
 TABLES = ["customers", "products", "orders", "order_items", "payments"]
 
+RAW_SCHEMA = "raw"
 
-def get_engine():
+
+def get_engine() -> Engine:
     host = os.getenv("POSTGRES_HOST", "localhost")
     port = os.getenv("POSTGRES_PORT", "5432")
     db = os.getenv("POSTGRES_DB", "meridian")
@@ -33,12 +36,16 @@ def get_engine():
     return create_engine(url)
 
 
-def main() -> None:
+def main(schema: str = RAW_SCHEMA) -> None:
+    # `schema` is a parameter (not just an env var) so tests can point this
+    # at an isolated schema like `raw_test`, rather than running destructive
+    # operations (this function truncates and can alter tables) against the
+    # same `raw` schema dbt builds its staging views from.
     engine = get_engine()
     loaded_at = datetime.now(UTC)
 
     with engine.begin() as conn:
-        conn.execute(text("CREATE SCHEMA IF NOT EXISTS raw"))
+        conn.execute(text(f"CREATE SCHEMA IF NOT EXISTS {schema}"))
 
     for table in TABLES:
         csv_path = DATA_DIR / f"{table}.csv"
@@ -61,9 +68,9 @@ def main() -> None:
             table_exists = conn.execute(
                 text(
                     "select exists (select 1 from information_schema.tables "
-                    "where table_schema = 'raw' and table_name = :table)"
+                    "where table_schema = :schema and table_name = :table)"
                 ),
-                {"table": table},
+                {"schema": schema, "table": table},
             ).scalar()
             if table_exists:
                 # Tolerate a table created before _loaded_at existed (e.g. a
@@ -73,14 +80,14 @@ def main() -> None:
                 # already been truncated.
                 conn.execute(
                     text(
-                        f"alter table raw.{table} "
+                        f"alter table {schema}.{table} "
                         "add column if not exists _loaded_at timestamptz"
                     )
                 )
-                conn.execute(text(f"truncate table raw.{table}"))
+                conn.execute(text(f"truncate table {schema}.{table}"))
 
-        df.to_sql(table, engine, schema="raw", if_exists="append", index=False)
-        print(f"Loaded {len(df)} rows into raw.{table}")
+        df.to_sql(table, engine, schema=schema, if_exists="append", index=False)
+        print(f"Loaded {len(df)} rows into {schema}.{table}")
 
 
 if __name__ == "__main__":
