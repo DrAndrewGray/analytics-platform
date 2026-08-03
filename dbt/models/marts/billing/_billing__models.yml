@@ -1,0 +1,103 @@
+version: 2
+
+models:
+  - name: dim_plans
+    description: One row per Meridian+ membership plan.
+    columns:
+      - name: plan_id
+        tests:
+          - unique
+          - not_null
+
+  - name: fct_subscriptions
+    description: One row per subscription phase. See docs/metric_definitions.md.
+    columns:
+      - name: subscription_id
+        tests:
+          - unique
+          - not_null
+      - name: customer_id
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_customers')
+                field: customer_id
+      - name: mrr_amount
+        tests:
+          - not_negative
+
+  - name: fct_invoices
+    description: One row per invoice, with payment/refund reconciliation against it.
+    columns:
+      - name: invoice_id
+        tests:
+          - unique
+          - not_null
+      - name: invoice_amount
+        tests:
+          - not_negative
+
+  - name: fct_payments
+    description: One row per payment attempt, netted against refunds.
+    columns:
+      - name: payment_id
+        tests:
+          - unique
+          - not_null
+
+  - name: mart_monthly_recurring_revenue
+    description: One row per month — total contracted MRR and paying subscriber counts.
+    columns:
+      - name: activity_month
+        tests:
+          - unique
+          - not_null
+      - name: total_mrr
+        tests:
+          - not_negative
+
+  - name: mart_mrr_movements
+    description: >
+      The MRR bridge, one row per month. computed_closing_mrr should
+      always equal closing_mrr — tested directly in
+      assert_mrr_bridge_reconciles.sql, not just implied by this model
+      existing.
+    columns:
+      - name: activity_month
+        tests:
+          - unique
+          - not_null
+
+  - name: mart_invoice_reconciliation
+    description: One row per month — invoiced vs. collected vs. refunded vs. outstanding.
+    columns:
+      - name: activity_month
+        tests:
+          - unique
+          - not_null
+
+  - name: mart_retention_cohorts
+    description: Cohort retention triangle — one row per (cohort_month, months_since_cohort_start).
+    columns:
+      - name: retention_rate
+        tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 1
+                inclusive: true
+
+  - name: mart_customer_metrics
+    description: One row per customer who has ever had a Meridian+ subscription.
+    columns:
+      - name: customer_id
+        tests:
+          - unique
+          - not_null
+
+  - name: mart_customer_lifetime_value
+    description: >
+      Single-row summary: the simple-CLV formula (avg MRR per active
+      customer / monthly churn rate) with both inputs shown alongside
+      the result.

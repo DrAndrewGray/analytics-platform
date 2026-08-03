@@ -1,0 +1,16 @@
+version: 2
+
+sources:
+  - name: billing
+    schema: raw_billing
+    loaded_at_field: _loaded_at
+    freshness:
+      warn_after: {count: 1, period: day}
+      error_after: {count: 3, period: day}
+    tables:
+      - name: plans
+      - name: subscriptions
+      - name: invoices
+      - name: invoice_lines
+      - name: payments
+      - name: refunds

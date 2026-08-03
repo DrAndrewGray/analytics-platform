@@ -53,13 +53,19 @@ jobs:
         run: uv run pyright scripts tests
 
       - name: Lint SQL (sqlfluff)
-        run: uv run sqlfluff lint dbt/models
+        run: uv run sqlfluff lint dbt/models dbt/tests
 
-      - name: Generate synthetic data
+      - name: Generate synthetic data (retail)
         run: uv run python scripts/generate_synthetic_data.py
+
+      - name: Generate synthetic data (billing)
+        run: uv run python scripts/generate_billing_data.py
 
       - name: Ingest into raw schema
         run: uv run python scripts/ingest.py
+
+      - name: Ingest into raw_billing schema
+        run: uv run python scripts/ingest_billing.py
 
       - name: Run pytest
         run: uv run pytest

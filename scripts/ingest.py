@@ -4,6 +4,10 @@ Stands in for a real ingestion step (e.g. an API extractor). Deliberately
 simple: truncate-and-reload per table, since the synthetic generator is the
 system of record here. A real ingestion framework (incremental extraction,
 retries, idempotency) is a separate, later portfolio project.
+
+`load_tables()` is the reusable core — `scripts/ingest_billing.py` calls it
+too, pointed at a different schema and table list, rather than duplicating
+this loop for a second source system.
 """
 
 from __future__ import annotations
@@ -36,24 +40,44 @@ def get_engine() -> Engine:
     return create_engine(url)
 
 
-def main(schema: str = RAW_SCHEMA) -> None:
-    # `schema` is a parameter (not just an env var) so tests can point this
-    # at an isolated schema like `raw_test`, rather than running destructive
-    # operations (this function truncates and can alter tables) against the
-    # same `raw` schema dbt builds its staging views from.
-    engine = get_engine()
+def _coerce_date_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Parse text columns that are unambiguously ISO dates into real dates.
+
+    pandas.read_csv() doesn't parse dates by default, and to_sql() then
+    infers each column's SQL type from whatever dtype it ended up with —
+    silently landing every date column as TEXT. Comparisons, min(), and
+    max() happen to still work on ISO-format text (it sorts identically to
+    the real date), which is exactly why this went unnoticed until a model
+    needed date_trunc(), which text doesn't support at all.
+
+    Deliberately conservative: a column is only converted if every
+    non-null value matches %Y-%m-%d, so this can't misfire on an
+    unrelated text column.
+    """
+    for column in df.columns:
+        # Not `dtype == "object"`: pandas 3.x's read_csv returns a
+        # dedicated StringDtype for text columns, not the classic
+        # `object` dtype, so that check silently matched nothing.
+        if not pd.api.types.is_string_dtype(df[column]):
+            continue
+        parsed = pd.to_datetime(df[column], format="%Y-%m-%d", errors="coerce")
+        is_unambiguous_date_column = (parsed.notna() | df[column].isna()).all()
+        if is_unambiguous_date_column:
+            df[column] = parsed.dt.date
+    return df
+
+
+def load_tables(engine: Engine, schema: str, data_dir: Path, tables: list[str]) -> None:
     loaded_at = datetime.now(UTC)
 
     with engine.begin() as conn:
         conn.execute(text(f"CREATE SCHEMA IF NOT EXISTS {schema}"))
 
-    for table in TABLES:
-        csv_path = DATA_DIR / f"{table}.csv"
+    for table in tables:
+        csv_path = data_dir / f"{table}.csv"
         if not csv_path.exists():
-            raise FileNotFoundError(
-                f"{csv_path} not found — run scripts/generate_synthetic_data.py first"
-            )
-        df = pd.read_csv(csv_path)
+            raise FileNotFoundError(f"{csv_path} not found — run the matching generator first")
+        df = _coerce_date_columns(pd.read_csv(csv_path))
         # A genuine ingestion-time timestamp, distinct from business dates
         # like order_date/signup_date. Source freshness should measure how
         # long ago a row actually arrived through the pipeline, not what
@@ -88,6 +112,14 @@ def main(schema: str = RAW_SCHEMA) -> None:
 
         df.to_sql(table, engine, schema=schema, if_exists="append", index=False)
         print(f"Loaded {len(df)} rows into {schema}.{table}")
+
+
+def main(schema: str = RAW_SCHEMA) -> None:
+    # `schema` is a parameter (not just an env var) so tests can point this
+    # at an isolated schema like `raw_test`, rather than running destructive
+    # operations (this function truncates and can alter tables) against the
+    # same `raw` schema dbt builds its staging views from.
+    load_tables(get_engine(), schema, DATA_DIR, TABLES)
 
 
 if __name__ == "__main__":

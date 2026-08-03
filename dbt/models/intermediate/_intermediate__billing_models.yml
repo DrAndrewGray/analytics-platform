@@ -1,0 +1,76 @@
+version: 2
+
+models:
+  - name: int_subscription_periods
+    description: Subscription phases enriched with plan details and each phase's MRR contribution.
+    columns:
+      - name: subscription_id
+        tests:
+          - unique
+          - not_null
+      - name: mrr_amount
+        tests:
+          - not_negative
+
+  - name: int_subscription_chain_month_spine
+    description: >
+      One row per (subscription_chain_id, month) with no gaps, from the
+      chain's first activity through the latest month with real billing
+      data. The backbone every other MRR model joins against.
+    columns:
+      - name: subscription_chain_id
+        tests:
+          - not_null
+
+  - name: int_subscription_active_phase_months
+    description: Each subscription phase exploded into one row per month it was active.
+
+  - name: int_subscription_mrr_by_chain_month
+    description: >
+      One row per (subscription_chain_id, month), every month covered,
+      with the authoritative MRR amount for that month (0 if inactive).
+    columns:
+      - name: mrr_amount
+        tests:
+          - not_negative
+
+  - name: int_subscription_mrr_movements
+    description: >
+      Classifies each chain-month's MRR change vs. the literal previous
+      calendar month into new/reactivation/expansion/contraction/churned.
+      Exactly one of these (or none, if MRR didn't change) is nonzero per row.
+    columns:
+      - name: new_mrr
+        tests:
+          - not_negative
+      - name: reactivation_mrr
+        tests:
+          - not_negative
+      - name: expansion_mrr
+        tests:
+          - not_negative
+      - name: contraction_mrr
+        tests:
+          - not_negative
+      - name: churned_mrr
+        tests:
+          - not_negative
+
+  - name: int_payment_refund_netting
+    description: One row per payment, netted against any refunds against it.
+    columns:
+      - name: payment_id
+        tests:
+          - unique
+          - not_null
+      - name: net_collected_amount
+        tests:
+          - not_negative
+
+  - name: int_invoice_payment_status
+    description: One row per invoice, with payment/refund reconciliation against it.
+    columns:
+      - name: invoice_id
+        tests:
+          - unique
+          - not_null

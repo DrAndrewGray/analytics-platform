@@ -1,0 +1,128 @@
+version: 2
+
+models:
+  - name: stg_billing__plans
+    description: One row per Meridian+ membership plan.
+    columns:
+      - name: plan_id
+        tests:
+          - unique
+          - not_null
+      - name: billing_interval
+        tests:
+          - accepted_values:
+              arguments:
+                values: ["monthly", "annual"]
+
+  - name: stg_billing__subscriptions
+    description: >
+      One row per subscription *phase* — a continuous stretch at a fixed
+      plan. A subscription's full history is every row sharing its
+      subscription_chain_id, ordered by phase_start_date. See
+      docs/metric_definitions.md for why phases, not mutable rows.
+    columns:
+      - name: subscription_id
+        tests:
+          - unique
+          - not_null
+      - name: customer_id
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_customers')
+                field: customer_id
+      - name: plan_id
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_billing__plans')
+                field: plan_id
+      - name: phase_type
+        tests:
+          - accepted_values:
+              arguments:
+                values: ["trial", "new", "upgrade", "downgrade", "reactivation"]
+      - name: ended_reason
+        tests:
+          - accepted_values:
+              arguments:
+                values: ["cancelled", "paused", "upgraded", "downgraded"]
+
+  - name: stg_billing__invoices
+    description: One row per issued invoice.
+    columns:
+      - name: invoice_id
+        tests:
+          - unique
+          - not_null
+      - name: subscription_id
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_billing__subscriptions')
+                field: subscription_id
+      - name: invoice_amount
+        tests:
+          - not_negative
+
+  - name: stg_billing__invoice_lines
+    description: One row per invoice line item.
+    columns:
+      - name: invoice_line_id
+        tests:
+          - unique
+          - not_null
+      - name: invoice_id
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_billing__invoices')
+                field: invoice_id
+      - name: line_amount
+        tests:
+          - not_negative
+
+  - name: stg_billing__payments
+    description: One row per payment attempt against an invoice.
+    columns:
+      - name: payment_id
+        tests:
+          - unique
+          - not_null
+      - name: invoice_id
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_billing__invoices')
+                field: invoice_id
+      - name: payment_status
+        tests:
+          - accepted_values:
+              arguments:
+                values: ["succeeded", "failed"]
+      - name: payment_amount
+        tests:
+          - not_negative
+
+  - name: stg_billing__refunds
+    description: One row per refund against a specific payment.
+    columns:
+      - name: refund_id
+        tests:
+          - unique
+          - not_null
+      - name: payment_id
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_billing__payments')
+                field: payment_id
+      - name: refund_amount
+        tests:
+          - not_negative

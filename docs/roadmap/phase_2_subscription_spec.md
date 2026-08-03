@@ -1,9 +1,13 @@
 # Phase 2 spec: subscription billing extension
 
-**Status: deferred, not Phase 1 work.** This document lays out the
-requirements for extending the warehouse with a subscription-billing
-domain (plans, subscriptions, invoices, payments, refunds, MRR/NRR-style
-metrics) — Phase 2 in this project's roadmap.
+**Status: implemented.** This was originally written as a forward-looking
+spec; Phase 2 (Meridian+ subscriptions) is now built. Kept here as the
+historical record of the plan — see
+[`docs/business_context.md`](../business_context.md),
+[`docs/metric_definitions.md`](../metric_definitions.md), and the
+[README's Phase 2 section](../../README.md#phase-2-meridian-subscriptions)
+for how the actual implementation matches (and in a few places,
+deliberately deviates from) what's below.
 
 It was originally drafted assuming the *retail* warehouse in this repo
 (customers/products/orders/order_items/payments) was an incomplete
