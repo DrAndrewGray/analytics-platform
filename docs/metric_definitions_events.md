@@ -56,6 +56,17 @@ at least one matching event on a given day; conversion rate between two
 steps is (visitors reaching the later step) / (visitors reaching the
 earlier step), for the same day.
 
+**This measures same-day step *presence*, not an ordered, causally-linked
+journey.** A visitor who views product A in the morning and buys
+unrelated product B that evening still counts as completing every step
+that day — nothing here confirms the view led to the cart add, or the
+cart add led to that specific purchase. A true sequential funnel would
+need to link specific view → cart → purchase events to each other (e.g.
+same product, strictly increasing timestamps, no intervening funnel-reset
+event), which is a real, heavier modeling task deliberately deferred
+here. Read `view_to_purchase_rate` as "purchased at all on a day they
+also viewed something," not "viewing X caused purchasing Y."
+
 `purchase` events carry the `order_id` of the resulting Phase 1 order —
 this is the one point where the event stream and the transactional
 warehouse connect. A purchase event without a same-day `product_view` or
@@ -64,10 +75,20 @@ straight to checkout) and is not treated as an error.
 
 ## Activation
 
-A customer is **activated** if their first `purchase` event happens
-within 14 days of their first `signup` event. This is a single,
-deliberately simple threshold — a real product-activation definition
-usually involves several distinct actions ("aha moments"), not just a
-purchase, but a single funnel-completion threshold is enough to
-demonstrate the calculation without inventing product behavior this
+A customer is **activated** if their first `purchase` event *on or after
+their first `signup` event* happens within 14 days of that signup. This
+is a single, deliberately simple threshold — a real product-activation
+definition usually involves several distinct actions ("aha moments"),
+not just a purchase, but a single funnel-completion threshold is enough
+to demonstrate the calculation without inventing product behavior this
 dataset doesn't actually model.
+
+The "on or after signup" qualifier is load-bearing, not decorative: a
+customer's globally-earliest purchase could predate their signup
+entirely (e.g. a guest checkout later followed by account creation).
+Using that earlier purchase as "first purchase" would produce a negative
+days-to-purchase and could satisfy the 14-day window by construction,
+marking someone activated based on activity that happened before they
+ever signed up. `mart_activation` filters purchases to
+`event_timestamp >= first_signup_at` before taking the minimum, and
+`days_to_first_purchase` is tested to never be negative.

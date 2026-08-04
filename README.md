@@ -194,6 +194,19 @@ against the warehouse output, not just the generator — e.g.
 `assert_scenario_14_produces_two_sessions.sql` checks the actual gap
 produces exactly two sessions in `fct_events`.
 
+**`mart_funnel_conversion` is a same-day *presence* funnel, not a
+sequential one — read the numbers accordingly.** A visitor who viewed
+product A in the morning and bought unrelated product B that evening
+still counts as completing the whole funnel that day; nothing here
+confirms the view caused the cart add or the cart add caused that
+specific purchase. That matches the written definition
+(`docs/metric_definitions_events.md`), but "funnel" usually implies
+ordered progression, so it's worth saying plainly: `view_to_purchase_rate`
+means "purchased at all on a day they also viewed something," not
+"viewing X caused purchasing Y." A true sequential funnel would link
+specific view → cart → purchase events to each other — a real, heavier
+piece of modeling deliberately deferred here.
+
 ### Bugs this caught
 
 1. **The date-coercion fix from Phase 2 only handled plain dates
@@ -220,6 +233,20 @@ produces exactly two sessions in `fct_events`.
    billing and event generators already used), with a new test
    (`test_dates_never_exceed_the_fixed_today_anchor`) that would catch a
    relative-string regression on any day after 2026-08-02.
+3. **`mart_activation` didn't require the purchase to happen after the
+   signup.** `first_purchase_at` was a customer's globally-earliest
+   purchase, full stop — if that purchase predated their first `signup`
+   event (e.g. a guest checkout later followed by account creation), it
+   would produce a negative `days_to_first_purchase` and could still
+   satisfy the 14-day activation window by construction, marking someone
+   activated based on activity that happened before they ever signed up.
+   Confirmed this hadn't actually occurred in the current dataset (a
+   direct query found zero affected customers), but the logic gap was
+   real regardless of what today's synthetic data happens to contain.
+   Fixed by filtering purchases to `event_timestamp >= first_signup_at`
+   before taking the minimum, with both a `not_negative` test on
+   `days_to_first_purchase` and a dedicated singular test
+   (`assert_activation_purchase_not_before_signup.sql`).
 
 ## What's tested, and why
 
@@ -270,6 +297,9 @@ produces exactly two sessions in `fct_events`.
 - **`assert_scenario_14_produces_two_sessions.sql`** — a named-scenario
   test: the 2-hour gap in the test data must produce exactly two
   sessions, checked against the real warehouse output.
+- **`assert_activation_purchase_not_before_signup.sql`** — a customer's
+  first counted purchase can never predate their first signup; guards
+  against the exact bug described above.
 
 ## Running it locally
 

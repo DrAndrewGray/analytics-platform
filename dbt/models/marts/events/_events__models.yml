@@ -21,7 +21,12 @@ models:
           - not_negative
 
   - name: mart_funnel_conversion
-    description: One row per day — funnel-step visitor counts and conversion rates.
+    description: >
+      One row per day — funnel-step visitor counts and conversion rates.
+      Measures same-day step *presence*, not an ordered, causally-linked
+      journey: a visitor who viewed one product in the morning and
+      bought an unrelated one that evening still counts as completing
+      every step that day. See docs/metric_definitions_events.md.
     columns:
       - name: activity_date
         tests:
@@ -29,9 +34,16 @@ models:
           - not_null
 
   - name: mart_activation
-    description: One row per customer who has ever signed up.
+    description: >
+      One row per customer who has ever signed up. first_purchase_at is
+      the first purchase on or after signup, not the customer's
+      globally-earliest purchase — see the model's own header comment
+      for why that distinction matters.
     columns:
       - name: customer_id
         tests:
           - unique
           - not_null
+      - name: days_to_first_purchase
+        tests:
+          - not_negative
