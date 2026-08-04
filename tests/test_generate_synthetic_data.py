@@ -17,6 +17,7 @@ from faker import Faker
 
 from scripts.generate_synthetic_data import (
     SEED,
+    TODAY,
     _line_amount,
     generate_customers,
     generate_order_items,
@@ -123,3 +124,15 @@ def test_no_negative_amounts(data):
 def test_order_date_never_precedes_customer_signup(data):
     merged = data["orders"].merge(data["customers"], on="customer_id", suffixes=("_order", "_cust"))
     assert (merged["order_date"] >= merged["signup_date"]).all()
+
+
+def test_dates_never_exceed_the_fixed_today_anchor(data):
+    # Regression test for a real bug: fake.date_between() with relative
+    # strings ("-3y", "today") resolves against the real system clock, not
+    # a fixed point — the same SEED produced different data depending on
+    # which real calendar day you ran the generator on. If a relative
+    # string ever creeps back in, dates start exceeding TODAY once this
+    # test is run after 2026-08-02, catching it independent of whichever
+    # day that happens to be.
+    assert (data["customers"]["signup_date"] <= TODAY).all()
+    assert (data["orders"]["order_date"] <= TODAY).all()

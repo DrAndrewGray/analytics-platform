@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import random
 from collections import defaultdict
-from datetime import timedelta
+from datetime import date, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
 
@@ -18,6 +18,16 @@ import pandas as pd
 from faker import Faker
 
 SEED = 20260731
+
+# A fixed reference date, not real-world "today": Faker's relative date
+# strings ("-3y", "today") resolve against the actual system clock at call
+# time, which means the same seed produced different data depending on
+# which real calendar day you ran this on — a genuine reproducibility bug
+# that the "two calls in the same process" determinism test never caught,
+# since both calls happened on the same day. Shared with the billing and
+# event generators, which already anchor to this exact date.
+TODAY = date(2026, 8, 2)
+
 N_CUSTOMERS = 500
 N_PRODUCTS = 40
 N_ORDERS = 3000
@@ -39,7 +49,9 @@ def weighted_choice(pairs: list[tuple[str, float]]) -> str:
 def generate_customers(fake: Faker) -> pd.DataFrame:
     rows = []
     for customer_id in range(1, N_CUSTOMERS + 1):
-        signup_date = fake.date_between(start_date="-3y", end_date="-30d")
+        signup_date = fake.date_between(
+            start_date=TODAY - timedelta(days=3 * 365), end_date=TODAY - timedelta(days=30)
+        )
         rows.append(
             {
                 "customer_id": customer_id,
@@ -81,7 +93,7 @@ def generate_orders(fake: Faker, customers: pd.DataFrame) -> pd.DataFrame:
     for order_id in range(1, N_ORDERS + 1):
         customer_id = random.choice(customer_ids)
         earliest = signup_by_customer[customer_id]
-        order_date = fake.date_between(start_date=earliest, end_date="today")
+        order_date = fake.date_between(start_date=earliest, end_date=TODAY)
         rows.append(
             {
                 "order_id": order_id,

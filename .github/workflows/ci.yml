@@ -61,11 +61,17 @@ jobs:
       - name: Generate synthetic data (billing)
         run: uv run python scripts/generate_billing_data.py
 
+      - name: Generate synthetic data (events)
+        run: uv run python scripts/generate_event_data.py
+
       - name: Ingest into raw schema
         run: uv run python scripts/ingest.py
 
       - name: Ingest into raw_billing schema
         run: uv run python scripts/ingest_billing.py
+
+      - name: Ingest into raw_events schema
+        run: uv run python scripts/ingest_events.py
 
       - name: Run pytest
         run: uv run pytest

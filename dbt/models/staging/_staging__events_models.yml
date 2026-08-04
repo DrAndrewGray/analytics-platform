@@ -1,0 +1,49 @@
+version: 2
+
+models:
+  - name: stg_events__events
+    description: >
+      One row per tracked interaction. customer_id is null until the
+      visitor is identified (signup/login) — see
+      docs/metric_definitions_events.md for how identity resolution
+      backfills it onto earlier events from the same anonymous_id.
+    columns:
+      - name: event_id
+        tests:
+          - unique
+          - not_null
+      - name: anonymous_id
+        tests:
+          - not_null
+      - name: event_type
+        tests:
+          - accepted_values:
+              arguments:
+                values:
+                  - page_view
+                  - search
+                  - product_view
+                  - add_to_cart
+                  - remove_from_cart
+                  - checkout_start
+                  - purchase
+                  - signup
+                  - login
+      - name: customer_id
+        tests:
+          - relationships:
+              arguments:
+                to: ref('stg_customers')
+                field: customer_id
+      - name: product_id
+        tests:
+          - relationships:
+              arguments:
+                to: ref('stg_products')
+                field: product_id
+      - name: order_id
+        tests:
+          - relationships:
+              arguments:
+                to: ref('stg_orders')
+                field: order_id

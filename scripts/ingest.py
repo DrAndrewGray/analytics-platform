@@ -41,29 +41,40 @@ def get_engine() -> Engine:
 
 
 def _coerce_date_columns(df: pd.DataFrame) -> pd.DataFrame:
-    """Parse text columns that are unambiguously ISO dates into real dates.
+    """Parse text columns that are unambiguously ISO dates/timestamps.
 
     pandas.read_csv() doesn't parse dates by default, and to_sql() then
     infers each column's SQL type from whatever dtype it ended up with —
-    silently landing every date column as TEXT. Comparisons, min(), and
-    max() happen to still work on ISO-format text (it sorts identically to
-    the real date), which is exactly why this went unnoticed until a model
-    needed date_trunc(), which text doesn't support at all.
+    silently landing every date/timestamp column as TEXT. Comparisons,
+    min(), and max() happen to still work on ISO-format text (it sorts
+    identically to the real value), which is exactly why this went
+    unnoticed until a model needed date_trunc(), which text doesn't
+    support at all.
 
     Deliberately conservative: a column is only converted if every
-    non-null value matches %Y-%m-%d, so this can't misfire on an
-    unrelated text column.
+    non-null value matches one of the formats below exactly, so this
+    can't misfire on an unrelated text column. Tries the timestamp
+    format first — a plain-date format would also "match" a timestamp
+    column by truncating away its time component, silently discarding
+    the part of the value that likely matters most (e.g. an event's
+    time of day for session-gap analysis).
     """
+    formats = [
+        ("%Y-%m-%d %H:%M:%S", False),  # full timestamp, keep the time component
+        ("%Y-%m-%d", True),  # plain date, safe to collapse to .dt.date
+    ]
     for column in df.columns:
         # Not `dtype == "object"`: pandas 3.x's read_csv returns a
         # dedicated StringDtype for text columns, not the classic
         # `object` dtype, so that check silently matched nothing.
         if not pd.api.types.is_string_dtype(df[column]):
             continue
-        parsed = pd.to_datetime(df[column], format="%Y-%m-%d", errors="coerce")
-        is_unambiguous_date_column = (parsed.notna() | df[column].isna()).all()
-        if is_unambiguous_date_column:
-            df[column] = parsed.dt.date
+        for fmt, is_date_only in formats:
+            parsed = pd.to_datetime(df[column], format=fmt, errors="coerce")
+            is_unambiguous_match = (parsed.notna() | df[column].isna()).all()
+            if is_unambiguous_match:
+                df[column] = parsed.dt.date if is_date_only else parsed
+                break
     return df
 
 

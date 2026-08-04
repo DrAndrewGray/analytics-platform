@@ -25,3 +25,6 @@ models:
       billing:
         +materialized: table
         +schema: marts
+      events:
+        +materialized: table
+        +schema: marts

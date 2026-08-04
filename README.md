@@ -6,13 +6,15 @@ system someone's revenue reporting actually depends on.
 
 **Phase 1** (retail: customers, orders, payments) is the foundation.
 **Phase 2** extends the same warehouse with a second revenue line —
-Meridian+, a subscription membership program — rather than starting a
-new project; see [Phase 2: Meridian+ subscriptions](#phase-2-meridian-subscriptions)
-below. Later phases add product-event analytics, a data-reliability lab,
-a semantic layer, and a benchmark-evaluated AI copilot — each either
-folded into this warehouse or extracted into its own repo when the
-technical story is genuinely different, not just a different dataset
-with the same shape.
+Meridian+, a subscription membership program. **Phase 3** adds
+product-event analytics (browsing, identity resolution, funnels) on top
+of both. Each extends the same warehouse rather than starting a new
+project; see [Phase 2](#phase-2-meridian-subscriptions) and
+[Phase 3](#phase-3-product-events) below. Later phases add a
+finance/data-reliability lab, a semantic layer, and a benchmark-evaluated
+AI copilot — each either folded in here or extracted into its own repo
+once the technical story is genuinely different, not just a different
+dataset with the same shape.
 
 ## Architecture
 
@@ -24,19 +26,24 @@ Retail:
 Billing (Phase 2):
   Python (Faker) --> data/raw/billing/*.csv  --> Postgres raw_billing schema --> dbt
                       generate_billing_data.py     ingest_billing.py
+
+Events (Phase 3):
+  Python (Faker) --> data/raw/events/*.csv   --> Postgres raw_events schema  --> dbt
+                      generate_event_data.py       ingest_events.py
 ```
 
-Two source schemas, not one: billing is modeled as a genuinely separate
-source system (see `docs/business_context.md`), and `raw_billing.payments`
-is a different table from `raw.payments` — same name, different grain,
+Three source schemas, not one: each domain is modeled as a genuinely
+separate source system (see `docs/business_context.md` /
+`docs/business_context_events.md`), and e.g. `raw_billing.payments` is a
+different table from `raw.payments` — same name, different grain,
 different source. A shared filename or schema would have silently
 collided; see "Bugs this caught," below.
 
 ```
 raw sources
-  -> staging      (stg_*, stg_billing__*)   1:1 cleaning, renaming, typing
-  -> intermediate (int_*)                   joins, grain changes, business rules
-  -> marts/core, marts/billing (dim_*, fct_*, mart_*)   dimensional model for consumption
+  -> staging      (stg_*, stg_billing__*, stg_events__*)   1:1 cleaning, renaming, typing
+  -> intermediate (int_*)                                  joins, grain changes, business rules
+  -> marts/core, marts/billing, marts/events (dim_*, fct_*, mart_*)   dimensional model for consumption
 ```
 
 ## Why the model looks like this
@@ -148,6 +155,72 @@ that had already shipped and passed CI:
    to `numeric` explicitly, the same discipline as Phase 1's
    `Decimal`-based payment totals.
 
+## Phase 3: product events
+
+Full design rationale lives in
+[`docs/business_context_events.md`](docs/business_context_events.md) and
+[`docs/metric_definitions_events.md`](docs/metric_definitions_events.md).
+The short version:
+
+**Identity resolution is the actual point of this phase**, not funnel
+math. An anonymous visitor (`anonymous_id`, a cookie-like identifier)
+browses before ever signing up; once they do, every *earlier* event from
+that same `anonymous_id` should resolve to their `customer_id` too —
+that's what makes pre-signup browsing behavior attributable at all.
+`int_identity_resolution` computes an `anonymous_id -> customer_id`
+mapping, and `int_events_resolved` backfills it onto the full event
+history, including events that happened before the identifying moment. A
+customer can also have *multiple* `anonymous_id`s (different device,
+cleared cookies) — resolution is per-`anonymous_id`, never assumed
+one-to-one.
+
+**Sessions aren't in the source data — they're computed downstream**,
+same as any real pipeline would: a new session starts after a 30+ minute
+gap in the same `anonymous_id`'s activity (`int_sessions`, industry-
+standard threshold). This has to run on the *raw* `anonymous_id`, before
+identity resolution, since sessions are about which client generated a
+contiguous burst of activity, not which customer it eventually turned
+out to be.
+
+**Ten named scenarios**, in `scripts/generate_event_data.py`
+(customer_ids 11-20, disjoint from Phase 2's 1-10): pre-signup browsing
+that resolves correctly, a visitor who never identifies, an exact
+duplicate event (double-fired beacon), a 30+ minute gap producing two
+sessions, a full funnel with search, an already-identified returning
+visitor, two different `anonymous_id`s resolving to one customer, an
+event that arrives out of row-order but must still sort correctly by
+`event_timestamp`, and a fast-vs-slow activation pair. Verified directly
+against the warehouse output, not just the generator — e.g.
+`assert_scenario_14_produces_two_sessions.sql` checks the actual gap
+produces exactly two sessions in `fct_events`.
+
+### Bugs this caught
+
+1. **The date-coercion fix from Phase 2 only handled plain dates
+   (`%Y-%m-%d`), not timestamps.** `events.event_timestamp` has a time
+   component session-gap analysis depends on entirely; the existing
+   format string would have either left it as `text` or silently
+   truncated away the time-of-day. `scripts/ingest.py`'s
+   `_coerce_date_columns()` now tries a timestamp format first and only
+   falls back to date-only, with a regression test
+   (`test_ingest_events_preserves_timestamp_precision`) asserting the
+   column lands as an actual `timestamp` type, not text.
+2. **The retail generator's dates weren't actually pinned to the seed —
+   they silently depended on which real calendar day you ran it.**
+   `fake.date_between(start_date="-3y", end_date="today")` resolves
+   relative strings against the real system clock at call time, not a
+   fixed point. Two runs on two different days, same `SEED`, produced
+   different `signup_date`/`order_date` values — which cascaded into
+   different downstream billing and event data, since both are generated
+   from Phase 1's customers/orders. This directly contradicted the
+   project's own stated goal ("a fixed seed keeps the dataset
+   reproducible"), and the existing determinism test never caught it
+   because both calls in that test happen on the same day. Fixed by
+   anchoring to a fixed `TODAY` constant (matching the pattern the
+   billing and event generators already used), with a new test
+   (`test_dates_never_exceed_the_fixed_today_anchor`) that would catch a
+   relative-string regression on any day after 2026-08-02.
+
 ## What's tested, and why
 
 - **Referential integrity** (`relationships` tests) between orders,
@@ -164,9 +237,9 @@ that had already shipped and passed CI:
   table-level invariant (total completed-order revenue can't be negative)
   rather than a per-row condition — demonstrates that not everything worth
   testing fits the generic-test, per-column shape.
-- **Source freshness** on all five raw tables, based on a genuine
-  `_loaded_at` ingestion timestamp set by `scripts/ingest.py` — not on
-  business dates like `order_date`. Freshness should answer "how long
+- **Source freshness** on every raw table across all three domains, based
+  on a genuine `_loaded_at` ingestion timestamp set by `scripts/ingest.py`
+  — not on business dates like `order_date`. Freshness should answer "how long
   since this actually arrived through the pipeline," which a business
   date can't tell you (an order placed a year ago that loaded five
   minutes ago is fresh; using `order_date` for that check would say the
@@ -188,6 +261,15 @@ that had already shipped and passed CI:
   would be ambiguous.
 - **`assert_annual_plans_normalize_to_monthly_mrr.sql`** — annual-plan
   MRR equals `list_price / 12`, checked directly rather than trusted.
+- **`assert_anonymous_id_maps_to_at_most_one_customer.sql`** —
+  `int_identity_resolution` uses `max(customer_id)` per `anonymous_id`,
+  which is only correct if that assumption holds; checked directly
+  rather than trusted.
+- **`assert_no_duplicate_events_remain.sql`** — structural check that
+  deduplication actually happened, not just that the logic exists.
+- **`assert_scenario_14_produces_two_sessions.sql`** — a named-scenario
+  test: the 2-hour gap in the test data must produce exactly two
+  sessions, checked against the real warehouse output.
 
 ## Running it locally
 
@@ -202,10 +284,14 @@ docker compose up -d
 docker compose ps   # wait for "healthy"
 
 # 3. Generate synthetic data and load it into the raw schemas
+# (billing and events both need customers.csv, so generate retail first;
+# events also needs products.csv and orders.csv)
 uv run python scripts/generate_synthetic_data.py    # retail: data/raw/*.csv
-uv run python scripts/generate_billing_data.py       # billing: data/raw/billing/*.csv (needs customers.csv first)
+uv run python scripts/generate_billing_data.py       # billing: data/raw/billing/*.csv
+uv run python scripts/generate_event_data.py         # events: data/raw/events/*.csv
 uv run python scripts/ingest.py                      # -> raw schema
 uv run python scripts/ingest_billing.py              # -> raw_billing schema
+uv run python scripts/ingest_events.py               # -> raw_events schema
 
 # 4. Run the Python test suite (generator + ingestion tests)
 uv run pytest
@@ -230,17 +316,18 @@ it are skipped rather than built on top of bad data.
 - **sqlfluff** — SQL linting for the dbt models and singular tests
   (`uv run sqlfluff lint dbt/models dbt/tests`)
 - **pyright** — Python type checking (`uv run pyright scripts tests`)
-- **pytest** — generator and ingestion tests, retail and billing
+- **pytest** — generator and ingestion tests across all three domains
   (`uv run pytest`). The ingestion tests need a reachable Postgres and
   skip themselves otherwise. They run against isolated `raw_test` /
-  `raw_billing_test` schemas, not the real `raw` / `raw_billing` schemas
-  dbt builds from — several of these tests are deliberately destructive
-  (dropping tables/columns to simulate failure scenarios), and running
-  destructive operations against shared dev state as a side effect of
-  `pytest` would be its own bug. One test is a regression test for a real
-  bug: re-ingesting used to `DROP TABLE`, which Postgres refuses once a
-  dbt view depends on it — ingestion now truncates instead, and the test
-  recreates that exact scenario to guard against it coming back.
+  `raw_billing_test` / `raw_events_test` schemas, not the real `raw` /
+  `raw_billing` / `raw_events` schemas dbt builds from — several of these
+  tests are deliberately destructive (dropping tables/columns to simulate
+  failure scenarios), and running destructive operations against shared
+  dev state as a side effect of `pytest` would be its own bug. One test
+  is a regression test for a real bug: re-ingesting used to `DROP TABLE`,
+  which Postgres refuses once a dbt view depends on it — ingestion now
+  truncates instead, and the test recreates that exact scenario to guard
+  against it coming back.
 
 ## Environments
 
@@ -256,19 +343,19 @@ defeated this isolation for snapshots specifically.
 ## CI
 
 GitHub Actions spins up a real Postgres service container, regenerates
-both the retail and billing synthetic data fresh (so source freshness
+the retail, billing, and event synthetic data fresh (so source freshness
 checks always pass), runs the Python test suite, then runs `dbt build`
 against the `ci` target on every push — the warehouse either builds and
 passes its tests, or the check fails. See `.github/workflows/ci.yml`.
 
 ## Roadmap
 
-Phase 1 (retail) and Phase 2 (Meridian+ subscriptions) are both done.
-Next up, per the original plan: product-event analytics, a
-finance/data-reliability lab, a semantic layer, a benchmark-evaluated AI
-copilot, and a scientific-data warehouse — extracted into their own repos
-once each has a technical story genuinely different from what's here,
-not just a different dataset with the same shape.
+Phase 1 (retail), Phase 2 (Meridian+ subscriptions), and Phase 3
+(product events) are all done. Next up, per the original plan: a
+finance/data-reliability lab, a semantic layer, and a benchmark-evaluated
+AI copilot — extracted into their own repos once each has a technical
+story genuinely different from what's here, not just a different dataset
+with the same shape.
 
 [`docs/roadmap/phase_2_subscription_spec.md`](docs/roadmap/phase_2_subscription_spec.md)
 is kept as a historical record of the original Phase 2 spec — the actual

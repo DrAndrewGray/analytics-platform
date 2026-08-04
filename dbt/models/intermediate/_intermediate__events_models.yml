@@ -1,0 +1,40 @@
+version: 2
+
+models:
+  - name: int_identity_resolution
+    description: One row per anonymous_id, mapped to the customer_id it resolves to (if any).
+    columns:
+      - name: anonymous_id
+        tests:
+          - unique
+          - not_null
+
+  - name: int_events_resolved
+    description: Every event with its fully resolved customer_id backfilled onto it.
+    columns:
+      - name: event_id
+        tests:
+          - unique
+          - not_null
+
+  - name: int_events_deduplicated
+    description: int_events_resolved with exact duplicate events removed.
+    columns:
+      - name: event_id
+        tests:
+          - unique
+          - not_null
+
+  - name: int_sessions
+    description: >
+      The deduplicated, identity-resolved event stream with a computed
+      session_id — a new session starts after a 30+ minute gap for the
+      same anonymous_id.
+    columns:
+      - name: event_id
+        tests:
+          - unique
+          - not_null
+      - name: session_id
+        tests:
+          - not_null
