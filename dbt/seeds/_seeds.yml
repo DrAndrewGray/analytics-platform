@@ -1,0 +1,37 @@
+version: 2
+
+seeds:
+  - name: accounting_periods
+    description: >
+      One row per monthly accounting period, 2023-01 through the current
+      month. closed_at is null for the two most recent periods (still
+      open); see docs/business_context_finance.md.
+    columns:
+      - name: period_id
+        tests:
+          - unique
+          - not_null
+      - name: period_start_date
+        tests:
+          - not_null
+      - name: period_end_date
+        tests:
+          - not_null
+
+  - name: tax_rates
+    description: >
+      Illustrative flat sales-tax rate per US state, used for the
+      booked-revenue-includes-tax reconciliation line. Not a real tax
+      engine — see docs/metric_definitions_finance.md.
+    columns:
+      - name: region
+        tests:
+          - unique
+          - not_null
+      - name: tax_rate
+        tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 0.15
+                inclusive: true

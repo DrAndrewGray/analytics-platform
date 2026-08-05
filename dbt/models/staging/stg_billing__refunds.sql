@@ -8,7 +8,7 @@ renamed as (
         payment_id,
         refund_date,
         reason as refund_reason,
-        amount as refund_amount
+        amount::numeric as refund_amount
     from source
 )
 

@@ -8,13 +8,15 @@ system someone's revenue reporting actually depends on.
 **Phase 2** extends the same warehouse with a second revenue line —
 Meridian+, a subscription membership program. **Phase 3** adds
 product-event analytics (browsing, identity resolution, funnels) on top
-of both. Each extends the same warehouse rather than starting a new
-project; see [Phase 2](#phase-2-meridian-subscriptions) and
-[Phase 3](#phase-3-product-events) below. Later phases add a
-finance/data-reliability lab, a semantic layer, and a benchmark-evaluated
-AI copilot — each either folded in here or extracted into its own repo
-once the technical story is genuinely different, not just a different
-dataset with the same shape.
+of both. **Phase 4** adds a finance/reconciliation layer across both
+revenue lines. Each extends the same warehouse rather than starting a new
+project; see [Phase 2](#phase-2-meridian-subscriptions),
+[Phase 3](#phase-3-product-events), and
+[Phase 4](#phase-4-finance-and-revenue-reconciliation) below. Later
+phases add a data-contracts/observability lab, a semantic layer, and a
+benchmark-evaluated AI copilot — each either folded in here or extracted
+into its own repo once the technical story is genuinely different, not
+just a different dataset with the same shape.
 
 ## Architecture
 
@@ -30,6 +32,10 @@ Billing (Phase 2):
 Events (Phase 3):
   Python (Faker) --> data/raw/events/*.csv   --> Postgres raw_events schema  --> dbt
                       generate_event_data.py       ingest_events.py
+
+Finance (Phase 4):
+  dbt/seeds/accounting_periods.csv, tax_rates.csv --> dbt seed --> analytics_seeds schema
+  (reference data, not a transactional source — see docs/business_context_finance.md)
 ```
 
 Three source schemas, not one: each domain is modeled as a genuinely
@@ -43,7 +49,7 @@ collided; see "Bugs this caught," below.
 raw sources
   -> staging      (stg_*, stg_billing__*, stg_events__*)   1:1 cleaning, renaming, typing
   -> intermediate (int_*)                                  joins, grain changes, business rules
-  -> marts/core, marts/billing, marts/events (dim_*, fct_*, mart_*)   dimensional model for consumption
+  -> marts/core, marts/billing, marts/events, marts/finance (dim_*, fct_*, mart_*)   dimensional model for consumption
 ```
 
 ## Why the model looks like this
@@ -248,6 +254,108 @@ piece of modeling deliberately deferred here.
    `days_to_first_purchase` and a dedicated singular test
    (`assert_activation_purchase_not_before_signup.sql`).
 
+## Phase 4: finance and revenue reconciliation
+
+Full design rationale lives in
+[`docs/business_context_finance.md`](docs/business_context_finance.md) and
+[`docs/metric_definitions_finance.md`](docs/metric_definitions_finance.md).
+The short version:
+
+**This phase doesn't add a new source system — it adds an accounting
+layer on top of the two revenue lines that already exist.** The
+questions it answers are company-wide: why does booked revenue differ
+from cash collected across *both* retail and billing combined, what
+changed after a reporting period closed, and can a number on a finance
+report be traced back to the raw rows that produced it.
+
+**`accounting_periods` and `tax_rates` are dbt seeds, not ingested
+tables.** Neither is a transactional extract from some source system —
+they're small, human-maintained reference data, checked into version
+control and loaded with `dbt seed`. Routing them through the synthetic
+Python generators and Postgres ingestion pipeline the way orders or
+events are handled would have modeled them as something they aren't.
+
+**A transaction is booked to the accounting period whose date range
+contains it** — `order_date` for retail, `invoice_date` for billing —
+regardless of when cash was actually collected. `int_revenue_by_period_retail`
+and `int_revenue_by_period_billing` each aggregate their own
+already-tested fact table (`fct_orders`, `fct_invoices`) rather than
+re-deriving revenue from raw rows a second time;
+`mart_revenue_reconciliation_by_period` then combines both into one
+company-wide `variance` (booked minus collected) per period.
+
+**A billing refund is a "late adjustment" if its invoice's accounting
+period was already closed (`closed_at` is non-null and in the past) by
+the time the refund happened.** `int_period_close_adjustments` links
+each refund to both its original period (by `invoice_date`) and its own
+adjustment period (by `refund_date`), so the two can be reconciled
+against each other. This is billing-only: Phase 1's retail schema has no
+distinct refund-date column separate from the original payment, so
+there's no honest way to ask "did this land after close" for a retail
+refund — a real scope limit of a simpler source system, not something
+papered over with an invented date.
+
+**One named scenario exercises the late-adjustment branch directly.**
+`scripts/generate_billing_data.py`'s customer 7 has a refund deliberately
+delayed 50 days (`refund_delay_days`) instead of the usual 20, landing it
+10 days after its invoice's period closes. Without a positive case like
+this, `is_late_adjustment` could regress to always-false and every test
+touching only its column shape would still pass —
+`assert_late_adjustment_scenario_exists.sql` guards against exactly that.
+
+**Traceability worked example.** One row of
+`mart_revenue_reconciliation_by_period` (period 25, January 2025) can be
+traced back to a single raw invoice:
+
+```
+mart_revenue_reconciliation_by_period (period_id=25)
+  -> fct_invoices (invoice_id=77, customer_id=7, invoice_amount=9.99)
+  -> stg_billing__invoices (invoice_id=77)
+  -> raw_billing.invoices (invoice_id=77, invoice_date=2025-01-01, amount=9.99)
+```
+
+That same invoice also drives the period-close-adjustment story: it was
+paid in full on 2025-01-01, its accounting period (`period_id=25`)
+closed on 2025-02-10, and a $9.99 refund landed on 2025-02-20 — 10 days
+later. `fct_period_close_adjustments` (`refund_id=1`) carries
+`original_period_id=25`, `adjustment_period_id=26`,
+`is_late_adjustment=true`, `days_after_close=10`. No separate
+traceability mart is needed for this: every model here is `ref()`-built
+on tested upstream models, so `dbt docs` lineage already shows the exact
+path from any mart-level number back to its raw source row.
+
+### Bugs this caught
+
+1. **`date - date` in Postgres returns an integer day count directly, not
+   an interval.** `int_period_close_adjustments.sql` originally computed
+   `days_after_close` as
+   `extract(epoch from (refund_date - original_period_closed_at)) / 86400`,
+   which fails outright (`extract(unknown, integer) does not exist`) —
+   `extract(epoch from ...)` is only meaningful for `interval`/`timestamp`
+   values, and both operands here are plain `date`. Fixed by dropping the
+   `extract(epoch from ...)` wrapper entirely; the subtraction alone is
+   already the answer.
+2. **A systemic `double precision` vs. `numeric` inconsistency across
+   half the warehouse's money columns, invisible until this phase
+   aggregated across many rows.** Spot-checking
+   `mart_revenue_reconciliation_by_period` turned up values like
+   `2331.8599999999997` and `8175.340000000001`. The root cause:
+   `fct_orders.amount_collected` was `double precision` while
+   `order_amount` was correctly `numeric` — an inconsistency that existed
+   since Phase 1 but had never been caught, because no test before this
+   one summed `amount_collected` across enough rows for float drift to
+   become visible. Traced through `int_order_payment_summary`'s `sum()`
+   back to an uncast `amount` column in `stg_payments.sql`. Once found,
+   the same pattern turned out to be present in six other staging models
+   (`stg_billing__invoices`, `stg_billing__refunds`,
+   `stg_billing__invoice_lines`, `stg_products`, `stg_billing__plans`,
+   `stg_order_items`) — none individually severe enough to notice on
+   their own, but the exact kind of bug a company-wide reconciliation
+   mart exists to surface. Fixed by casting every money column to
+   `::numeric` at the staging boundary, the layer whose job is type
+   correctness, rather than patching each downstream symptom
+   individually.
+
 ## What's tested, and why
 
 - **Referential integrity** (`relationships` tests) between orders,
@@ -300,6 +408,24 @@ piece of modeling deliberately deferred here.
 - **`assert_activation_purchase_not_before_signup.sql`** — a customer's
   first counted purchase can never predate their first signup; guards
   against the exact bug described above.
+- **`assert_accounting_periods_no_gaps_or_overlaps.sql`** — the
+  `accounting_periods` seed must form a contiguous, non-overlapping
+  monthly sequence, since a gap or overlap would let a transaction land
+  in zero or two periods.
+- **`assert_reconciliation_matches_source_facts.sql`** — recomputes
+  `total_booked_revenue` directly from `fct_orders`/`fct_invoices`,
+  bypassing `int_revenue_by_period_retail`/`billing` entirely, and checks
+  it matches `mart_revenue_reconciliation_by_period`. Catches a bug in
+  the period-assignment or aggregation logic itself, not just one shared
+  between the mart and its own intermediates.
+- **`assert_late_adjustment_scenario_exists.sql`** — a named-scenario
+  test: at least one refund must actually trigger `is_late_adjustment`,
+  guarding against that branch silently regressing to always-false while
+  every column-shape test still passes.
+- **`assert_days_after_close_consistent_with_late_flag.sql`** —
+  `days_after_close` must be populated (and positive) exactly when
+  `is_late_adjustment` is true, and null otherwise; guards the two
+  columns against drifting apart from their shared condition.
 
 ## Running it locally
 
@@ -336,7 +462,7 @@ uv run dbt docs generate --profiles-dir .
 uv run dbt docs serve --profiles-dir .
 ```
 
-`dbt build` runs models, tests, and snapshots together, in dependency
+`dbt build` runs seeds, models, tests, and snapshots together, in dependency
 order — if a test on `stg_orders` fails, downstream marts that depend on
 it are skipped rather than built on top of bad data.
 
@@ -380,12 +506,12 @@ passes its tests, or the check fails. See `.github/workflows/ci.yml`.
 
 ## Roadmap
 
-Phase 1 (retail), Phase 2 (Meridian+ subscriptions), and Phase 3
-(product events) are all done. Next up, per the original plan: a
-finance/data-reliability lab, a semantic layer, and a benchmark-evaluated
-AI copilot — extracted into their own repos once each has a technical
-story genuinely different from what's here, not just a different dataset
-with the same shape.
+Phase 1 (retail), Phase 2 (Meridian+ subscriptions), Phase 3 (product
+events), and Phase 4 (finance and revenue reconciliation) are all done.
+Next up, per the original plan: a data-contracts/observability lab, a
+semantic layer, and a benchmark-evaluated AI copilot — extracted into
+their own repos once each has a technical story genuinely different from
+what's here, not just a different dataset with the same shape.
 
 [`docs/roadmap/phase_2_subscription_spec.md`](docs/roadmap/phase_2_subscription_spec.md)
 is kept as a historical record of the original Phase 2 spec — the actual

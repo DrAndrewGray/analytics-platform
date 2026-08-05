@@ -9,8 +9,8 @@ renamed as (
         subscription_id,
         description,
         quantity,
-        unit_amount,
-        amount as line_amount
+        unit_amount::numeric as unit_amount,
+        amount::numeric as line_amount
     from source
 )
 

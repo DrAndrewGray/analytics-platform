@@ -28,3 +28,10 @@ models:
       events:
         +materialized: table
         +schema: marts
+      finance:
+        +materialized: table
+        +schema: marts
+
+seeds:
+  meridian_analytics:
+    +schema: seeds

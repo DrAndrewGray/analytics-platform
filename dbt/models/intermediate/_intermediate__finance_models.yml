@@ -1,0 +1,38 @@
+version: 2
+
+models:
+  - name: int_revenue_by_period_retail
+    description: Completed retail orders assigned to their accounting period, with tax.
+    columns:
+      - name: order_id
+        tests:
+          - unique
+          - not_null
+      - name: booked_revenue
+        tests:
+          - not_negative
+
+  - name: int_revenue_by_period_billing
+    description: Billing invoices assigned to their accounting period, with tax.
+    columns:
+      - name: invoice_id
+        tests:
+          - unique
+          - not_null
+      - name: booked_revenue
+        tests:
+          - not_negative
+
+  - name: int_period_close_adjustments
+    description: >
+      Every billing refund annotated with its original and adjustment
+      accounting periods, and whether the original period was already
+      closed when the refund happened.
+    columns:
+      - name: refund_id
+        tests:
+          - unique
+          - not_null
+      - name: refund_date
+        tests:
+          - not_null

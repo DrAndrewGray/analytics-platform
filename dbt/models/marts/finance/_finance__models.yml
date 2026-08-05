@@ -1,0 +1,34 @@
+version: 2
+
+models:
+  - name: dim_accounting_periods
+    description: One row per monthly accounting period, with a derived is_closed flag.
+    columns:
+      - name: period_id
+        tests:
+          - unique
+          - not_null
+
+  - name: fct_period_close_adjustments
+    description: >
+      One row per billing refund, with period-close-adjustment context.
+      Filter on is_late_adjustment to see only refunds that landed after
+      their original invoice's period had already closed.
+    columns:
+      - name: refund_id
+        tests:
+          - unique
+          - not_null
+
+  - name: mart_revenue_reconciliation_by_period
+    description: >
+      One row per accounting period: booked revenue, tax, and cash
+      collected, combined across retail and billing.
+    columns:
+      - name: period_id
+        tests:
+          - unique
+          - not_null
+      - name: total_booked_revenue
+        tests:
+          - not_negative

@@ -104,6 +104,7 @@ class PaymentOutcome:
 
     kind: str  # 'full', 'failed_then_retry', 'partial', 'unpaid', 'late'
     refund: str | None = None  # None | 'full' | 'partial'
+    refund_delay_days: int = 20
 
 
 # ---------------------------------------------------------------------------
@@ -184,7 +185,9 @@ def _named_scenarios() -> dict[int, list[PhaseSpec]]:
 # "paid in full, on time" behavior.
 NAMED_PAYMENT_OUTCOMES: dict[tuple[int, int], PaymentOutcome] = {
     (6, 2): PaymentOutcome("failed_then_retry"),  # last invoice before cancelling
-    (7, 0): PaymentOutcome("full", refund="full"),  # fully refunded after cancellation
+    (7, 0): PaymentOutcome(
+        "full", refund="full", refund_delay_days=50
+    ),  # fully refunded after cancellation, late enough to land after period close
     (8, 0): PaymentOutcome("full", refund="partial"),  # partially refunded
     (9, 0): PaymentOutcome("partial"),  # first annual invoice only partly paid
     (10, 1): PaymentOutcome("unpaid"),  # one invoice never gets paid
@@ -537,7 +540,7 @@ def _generate_payments_for_invoice(
             {
                 "refund_id": refund_id,
                 "payment_id": succeeded_payment_id,
-                "refund_date": invoice_date + timedelta(days=20),
+                "refund_date": invoice_date + timedelta(days=outcome.refund_delay_days),
                 "amount": float(refund_amount),
                 "reason": "customer_request",
             }

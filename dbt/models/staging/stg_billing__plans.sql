@@ -8,7 +8,7 @@ renamed as (
         plan_name,
         billing_interval,
         currency,
-        price
+        price::numeric as price
     from source
 )
 
