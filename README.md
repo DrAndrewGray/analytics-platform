@@ -9,14 +9,17 @@ system someone's revenue reporting actually depends on.
 Meridian+, a subscription membership program. **Phase 3** adds
 product-event analytics (browsing, identity resolution, funnels) on top
 of both. **Phase 4** adds a finance/reconciliation layer across both
-revenue lines. Each extends the same warehouse rather than starting a new
-project; see [Phase 2](#phase-2-meridian-subscriptions),
-[Phase 3](#phase-3-product-events), and
-[Phase 4](#phase-4-finance-and-revenue-reconciliation) below. Later
-phases add a data-contracts/observability lab, a semantic layer, and a
-benchmark-evaluated AI copilot — each either folded in here or extracted
-into its own repo once the technical story is genuinely different, not
-just a different dataset with the same shape.
+revenue lines. **Phase 5** adds a reliability lab around all of it —
+contracts, anomaly detection, and worked incidents proving the controls
+actually catch something. Each extends the same warehouse rather than
+starting a new project; see [Phase 2](#phase-2-meridian-subscriptions),
+[Phase 3](#phase-3-product-events),
+[Phase 4](#phase-4-finance-and-revenue-reconciliation), and
+[Phase 5](#phase-5-data-contracts-and-observability) below. Later
+phases add a semantic layer, a reusable Python ingestion framework, and
+a benchmark-evaluated AI copilot — each either folded in here or
+extracted into its own repo once the technical story is genuinely
+different, not just a different dataset with the same shape.
 
 ## Architecture
 
@@ -36,6 +39,11 @@ Events (Phase 3):
 Finance (Phase 4):
   dbt/seeds/accounting_periods.csv, tax_rates.csv --> dbt seed --> analytics_seeds schema
   (reference data, not a transactional source — see docs/business_context_finance.md)
+
+Reliability (Phase 5):
+  scripts/inject_failure.py --> real DDL/DML against the schemas above --> dbt build
+  scripts/generate_alert_report.py / impact_analysis.py / check_source_schema.py / generate_health_report.py
+  (read dbt's own artifacts + the live warehouse; no separate monitoring service)
 ```
 
 Three source schemas, not one: each domain is modeled as a genuinely
@@ -49,7 +57,7 @@ collided; see "Bugs this caught," below.
 raw sources
   -> staging      (stg_*, stg_billing__*, stg_events__*)   1:1 cleaning, renaming, typing
   -> intermediate (int_*)                                  joins, grain changes, business rules
-  -> marts/core, marts/billing, marts/events, marts/finance (dim_*, fct_*, mart_*)   dimensional model for consumption
+  -> marts/core, marts/billing, marts/events, marts/finance, marts/reliability (dim_*, fct_*, mart_*)   dimensional model for consumption
 ```
 
 ## Why the model looks like this
@@ -451,6 +459,127 @@ any mart-level number back to its raw source row.
    against the warehouse and confirming the old query returned zero rows
    while the new one returns a failure.
 
+## Phase 5: data contracts and observability
+
+Full design rationale lives in
+[`docs/reliability_strategy.md`](docs/reliability_strategy.md) and
+[`docs/data_contracts.md`](docs/data_contracts.md); day-to-day usage is
+in [`docs/runbook.md`](docs/runbook.md); worked examples are in
+[`docs/incidents/`](docs/incidents/). The short version:
+
+**This phase asks a different question than Phases 1–4.** Those built a
+warehouse that's correct under normal conditions. This one asks what
+happens when a source changes shape, a pipeline stops loading, or a
+number moves outside its plausible range — and whether anyone would
+actually find out. It's a small reliability lab around the existing
+warehouse, not a new revenue domain, and deliberately not an attempt to
+rebuild Monte Carlo: every control here is either a dbt test/contract
+(runs as part of `dbt build`, on infrastructure Phases 1–4 already pay
+for) or a small on-demand Python script — no continuously-running
+service, no UI.
+
+**dbt model contracts on four marts, chosen for what a stakeholder would
+actually screenshot.** `fct_orders`, `fct_invoices`,
+`mart_revenue_reconciliation_by_period`, and
+`mart_cash_movements_by_period` all declare an explicit column list with
+types and a `primary_key` constraint. The real difference from a
+`unique`/`not_null` test: a contract is enforced *at build time* — a
+duplicate grain value or a wrong column type fails the `create table`
+itself, so the bad table never exists to be queried even briefly, versus
+a test that catches it after the fact. `docs/data_contracts.md` has the
+full reasoning, including why source-level contracts don't exist as a
+dbt primitive and what stands in for one
+(`scripts/check_source_schema.py`, diffing live `information_schema`
+against a checked-in snapshot).
+
+**Volume and metric anomaly checks are calibrated from this dataset's
+own history, not picked arbitrarily.** Volume anomalies compare each
+source's row count per accounting period (not per day — see
+`docs/reliability_strategy.md` for why day-grain is pure noise at this
+dataset's scale) against a 3-period trailing average; the -40% drop
+threshold leaves more than 2x margin below the worst real month-over-month
+drop on record (-19.1%). `order_amount`/`invoice_amount` ceilings
+($10,000 / $2,000) are grounded in the actual product/plan catalog, not
+round numbers. A period-over-period *revenue* trend check was tried and
+deliberately dropped — this dataset's early-growth swings (+616% one
+month) are legitimate, and a threshold loose enough to tolerate that
+couldn't catch a real anomaly either.
+
+**Lineage and alerting both read dbt's own `manifest.json`/
+`run_results.json`, not a hand-maintained diagram.**
+`scripts/impact_analysis.py` answers "if this model or source breaks,
+what's downstream" straight from `manifest.json`'s dependency graph — it
+can't drift out of sync with what dbt actually builds, because it's the
+same graph dbt uses. `scripts/generate_alert_report.py` layers failure
+detection on top: for every failed test or model, it reports the
+message *and* the downstream impact, plus an informational section for
+open late period-close adjustments (not a failure — see Incident 003) —
+the "so what do I actually look at" question a raw `dbt build` log
+doesn't answer by itself.
+
+**Failure injection runs real DDL/DML against the real database, not a
+separate fake environment.** `scripts/inject_failure.py` has nine named
+scenarios (`list` to see them); each one mutates the actual Postgres
+schemas dbt builds from, because the point is demonstrating what the
+real pipeline does when its real inputs break. Recovery reuses the same
+regenerate-and-reingest path every earlier phase already relies on for
+a clean reset — except, as it turns out, that path has a real gap for
+schema-shaped failures specifically (see "Bugs this caught," below).
+
+**Three incidents, chosen for three different detection mechanisms, not
+just three different failures**: a required column disappearing (a
+plain compilation error, one layer downstream); a column silently
+changing type (caught by *two* independent controls at two different
+points — a generic `relationships` test, and a contract two models
+further down); and late-arriving data changing an already-closed
+period's own report (no test failure at all, by design — only the
+alert script's informational section catches it). Full transcripts,
+real numbers, in `docs/incidents/`.
+
+### Bugs this caught
+
+1. **The project's standard recovery path — regenerate data, re-run
+   ingestion, `dbt build` — silently assumes re-ingestion targets a
+   structurally-unchanged table, and that assumption breaks for exactly
+   the failures this phase is built to demonstrate.** `scripts/ingest.py`
+   truncates and re-inserts into the *existing* table by design (so
+   dependent dbt views survive a normal data refresh — a real, correct
+   decision for the common case). But after Incident 001's dropped
+   column, re-running it failed outright: an insert with a `channel`
+   column against a table that no longer has one. Truncate-and-reload
+   only recovers from bad *data*, not bad *structure*. Fixed the
+   incidents, not the script: `docs/runbook.md` now documents
+   `DROP TABLE ... CASCADE` before re-ingestion as the correct recovery
+   path specifically for schema-shaped failures, since building that
+   distinction into `ingest.py` itself would mean guessing, at ingest
+   time, whether a given re-run is a routine refresh or a structural
+   recovery — a judgment call a human doing incident response can make
+   correctly and a heuristic in the script probably can't.
+2. **Running `dbt build` to *diagnose* Incident 002's failure changed
+   what recovery needed to do.** The natural instinct — build once to
+   see the error, then fix it — doesn't hold for a type-change failure:
+   the diagnostic build itself recreated `stg_orders` (it doesn't cast
+   `customer_id`, so it rebuilds "successfully" with the wrong type),
+   which meant a plain `DROP TABLE raw.orders` afterward failed with a
+   view-dependency error that the injector's own `CASCADE` had already
+   cleared *before* that build ran. Documented in
+   `docs/incidents/002_column_type_change.md` and the runbook, rather
+   than papered over — the honest fix is knowing to use `CASCADE`
+   unconditionally for schema-shaped recovery, not assuming the
+   dependency state you saw a minute ago still holds.
+3. **`scripts/generate_health_report.py`'s first draft silently
+   miscounted its own test summary.** It bucketed every `run_results.json`
+   entry by status without filtering to `resource_type == "test"` first,
+   then only displayed a fixed list of test-shaped statuses
+   (`pass`/`fail`/`error`/`warn`/`skipped`) — which happened to exclude
+   `success` (what models report), so the "Tests" section looked
+   correct by coincidence rather than by construction. A model failure
+   would have silently vanished from the count instead of showing up
+   anywhere. Caught before it shipped by cross-checking the report's
+   number against `dbt build`'s own printed summary line and noticing
+   there was no principled reason they should have matched. Fixed by
+   resolving each result's `resource_type` from `manifest.json` first.
+
 ## What's tested, and why
 
 - **Referential integrity** (`relationships` tests) between orders,
@@ -538,6 +667,27 @@ any mart-level number back to its raw source row.
   retail payment's amount must appear in both `retail_cash_in` and
   `retail_cash_out` for its period, not just `cash_out`; guards the
   netting bug described in "Bugs this caught," above.
+- **dbt contracts** (`config: {contract: {enforced: true}}`, an explicit
+  column list with types, and a `primary_key` constraint) on
+  `fct_orders`, `fct_invoices`, `mart_revenue_reconciliation_by_period`,
+  and `mart_cash_movements_by_period` — enforced at build time, not
+  after; see `docs/data_contracts.md` and Incident 002 for a contract
+  actually catching something a test alone would have caught one layer
+  later, not at all.
+- **`assert_no_volume_anomaly.sql`** — no closed accounting period may
+  show a source's row count dropping ≥40% against its own 3-period
+  trailing average, once that average is at least 10 rows (both numbers
+  calibrated from this dataset's real history — see
+  `docs/reliability_strategy.md`).
+- **`not_implausibly_large`** (custom generic test) on
+  `fct_orders.order_amount` and `fct_invoices.invoice_amount` — a
+  row-level plausible-range ceiling grounded in the actual product/plan
+  catalog, not a round guess.
+- **`scripts/check_source_schema.py`** — compares live
+  `information_schema` for every raw table against a checked-in
+  snapshot (`docs/expected_source_schemas.json`); the practical
+  equivalent of a source-level contract, since dbt's own contract
+  primitive is model-level only.
 
 ## Running it locally
 
@@ -616,14 +766,26 @@ checks always pass), runs the Python test suite, then runs `dbt build`
 against the `ci` target on every push — the warehouse either builds and
 passes its tests, or the check fails. See `.github/workflows/ci.yml`.
 
+A second, manually-triggered workflow
+(`.github/workflows/reliability-demo.yml`) exists specifically to break
+things: pick a scenario from `scripts/inject_failure.py list`, and it
+builds a clean warehouse, injects that failure, asserts the expected
+control actually fires (not just "something failed" — the specific
+model/test dbt build or freshness check was expected to catch), then
+recovers and verifies a clean rebuild. Kept separate from `ci.yml` on
+purpose — it's a demonstration of Phase 5's controls, not a gate normal
+work should have to pass.
+
 ## Roadmap
 
 Phase 1 (retail), Phase 2 (Meridian+ subscriptions), Phase 3 (product
-events), and Phase 4 (finance and revenue reconciliation) are all done.
-Next up, per the original plan: a data-contracts/observability lab, a
-semantic layer, and a benchmark-evaluated AI copilot — extracted into
-their own repos once each has a technical story genuinely different from
-what's here, not just a different dataset with the same shape.
+events), Phase 4 (finance and revenue reconciliation), and Phase 5
+(data contracts and observability) are all done. Next up, per the
+original plan: a semantic layer (extending this same warehouse), a
+reusable Python ingestion framework, a scientific analytics warehouse,
+and a benchmark-evaluated AI copilot — each extracted into its own repo
+once it has a technical story genuinely different from what's here, not
+just a different dataset with the same shape.
 
 [`docs/roadmap/phase_2_subscription_spec.md`](docs/roadmap/phase_2_subscription_spec.md)
 is kept as a historical record of the original Phase 2 spec — the actual

@@ -26,15 +26,54 @@ models:
       and cash collected against those bookings, combined across retail
       and billing. Booking-period attribution throughout — see
       mart_cash_movements_by_period for the by-payment-date/refund-date
-      view of the same money.
+      view of the same money. Contracted (see docs/data_contracts.md):
+      this is the actual reconciliation report Phase 5 exists to protect.
+    config:
+      contract:
+        enforced: true
+    constraints:
+      - type: primary_key
+        columns: [period_id]
     columns:
       - name: period_id
+        data_type: integer
+        constraints:
+          - type: not_null
         tests:
           - unique
           - not_null
+      - name: period_start_date
+        data_type: date
+        constraints:
+          - type: not_null
+      - name: period_end_date
+        data_type: date
+        constraints:
+          - type: not_null
+      - name: is_closed
+        data_type: boolean
+        constraints:
+          - type: not_null
+      - name: retail_net_booked_revenue
+        data_type: numeric
+      - name: billing_net_booked_revenue
+        data_type: numeric
+      - name: retail_collected_against_bookings
+        data_type: numeric
+      - name: billing_collected_against_bookings
+        data_type: numeric
+      - name: billing_refunded_amount_against_bookings
+        data_type: numeric
       - name: total_net_booked_revenue
+        data_type: numeric
         tests:
           - not_negative
+      - name: total_tax_amount
+        data_type: numeric
+      - name: total_collected_against_bookings
+        data_type: numeric
+      - name: variance
+        data_type: numeric
 
   - name: mart_cash_movements_by_period
     description: >
@@ -42,15 +81,53 @@ models:
       period (payment_date for inflows, refund_date for outflows),
       combined across retail and billing. Cash-movement attribution
       throughout — see mart_revenue_reconciliation_by_period for the
-      booking-period view of the same money.
+      booking-period view of the same money. Contracted, same reasoning
+      as mart_revenue_reconciliation_by_period.
+    config:
+      contract:
+        enforced: true
+    constraints:
+      - type: primary_key
+        columns: [period_id]
     columns:
       - name: period_id
+        data_type: integer
+        constraints:
+          - type: not_null
         tests:
           - unique
           - not_null
+      - name: period_start_date
+        data_type: date
+        constraints:
+          - type: not_null
+      - name: period_end_date
+        data_type: date
+        constraints:
+          - type: not_null
+      - name: is_closed
+        data_type: boolean
+        constraints:
+          - type: not_null
+      - name: retail_cash_in
+        data_type: numeric
+      - name: retail_cash_out
+        data_type: numeric
+      - name: billing_cash_in
+        data_type: numeric
+      - name: billing_cash_out
+        data_type: numeric
+      - name: retail_net_cash_movement
+        data_type: numeric
+      - name: billing_net_cash_movement
+        data_type: numeric
       - name: total_cash_in
+        data_type: numeric
         tests:
           - not_negative
       - name: total_cash_out
+        data_type: numeric
         tests:
           - not_negative
+      - name: total_net_cash_movement
+        data_type: numeric

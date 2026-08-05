@@ -1,0 +1,116 @@
+{
+  "raw.customers": {
+    "_loaded_at": "timestamp with time zone",
+    "country": "text",
+    "customer_id": "bigint",
+    "email": "text",
+    "first_name": "text",
+    "last_name": "text",
+    "region": "text",
+    "signup_date": "date"
+  },
+  "raw.order_items": {
+    "_loaded_at": "timestamp with time zone",
+    "discount": "double precision",
+    "order_id": "bigint",
+    "order_item_id": "bigint",
+    "product_id": "bigint",
+    "quantity": "bigint",
+    "unit_price": "double precision"
+  },
+  "raw.orders": {
+    "_loaded_at": "timestamp with time zone",
+    "channel": "text",
+    "customer_id": "bigint",
+    "order_date": "date",
+    "order_id": "bigint",
+    "status": "text"
+  },
+  "raw.payments": {
+    "_loaded_at": "timestamp with time zone",
+    "amount": "double precision",
+    "order_id": "bigint",
+    "payment_date": "date",
+    "payment_id": "bigint",
+    "payment_method": "text",
+    "status": "text"
+  },
+  "raw.products": {
+    "_loaded_at": "timestamp with time zone",
+    "category": "text",
+    "is_active": "boolean",
+    "product_id": "bigint",
+    "product_name": "text",
+    "unit_cost": "double precision",
+    "unit_price": "double precision"
+  },
+  "raw_billing.invoice_lines": {
+    "_loaded_at": "timestamp with time zone",
+    "amount": "double precision",
+    "description": "text",
+    "invoice_id": "bigint",
+    "invoice_line_id": "bigint",
+    "quantity": "bigint",
+    "subscription_id": "bigint",
+    "unit_amount": "double precision"
+  },
+  "raw_billing.invoices": {
+    "_loaded_at": "timestamp with time zone",
+    "amount": "double precision",
+    "customer_id": "bigint",
+    "invoice_date": "date",
+    "invoice_id": "bigint",
+    "period_end": "date",
+    "period_start": "date",
+    "subscription_id": "bigint"
+  },
+  "raw_billing.payments": {
+    "_loaded_at": "timestamp with time zone",
+    "amount": "double precision",
+    "invoice_id": "bigint",
+    "is_retry": "boolean",
+    "payment_date": "date",
+    "payment_id": "bigint",
+    "payment_method": "text",
+    "status": "text"
+  },
+  "raw_billing.plans": {
+    "_loaded_at": "timestamp with time zone",
+    "billing_interval": "text",
+    "currency": "text",
+    "plan_id": "bigint",
+    "plan_name": "text",
+    "price": "double precision"
+  },
+  "raw_billing.refunds": {
+    "_loaded_at": "timestamp with time zone",
+    "amount": "double precision",
+    "payment_id": "bigint",
+    "reason": "text",
+    "refund_date": "date",
+    "refund_id": "bigint"
+  },
+  "raw_billing.subscriptions": {
+    "_loaded_at": "timestamp with time zone",
+    "customer_id": "bigint",
+    "ended_reason": "text",
+    "is_trial": "boolean",
+    "phase_end_date": "date",
+    "phase_start_date": "date",
+    "phase_type": "text",
+    "plan_id": "bigint",
+    "subscription_chain_id": "bigint",
+    "subscription_id": "bigint"
+  },
+  "raw_events.events": {
+    "_loaded_at": "timestamp with time zone",
+    "anonymous_id": "text",
+    "customer_id": "double precision",
+    "event_id": "bigint",
+    "event_timestamp": "timestamp without time zone",
+    "event_type": "text",
+    "order_id": "double precision",
+    "product_id": "double precision",
+    "search_query": "text"
+  }
+}

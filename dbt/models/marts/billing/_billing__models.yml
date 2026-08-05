@@ -28,15 +28,57 @@ models:
           - not_negative
 
   - name: fct_invoices
-    description: One row per invoice, with payment/refund reconciliation against it.
+    description: >
+      One row per invoice, with payment/refund reconciliation against it.
+      Contracted (see docs/data_contracts.md): feeds both Phase 4
+      finance marts, same reasoning as fct_orders' contract.
+    config:
+      contract:
+        enforced: true
+    constraints:
+      - type: primary_key
+        columns: [invoice_id]
     columns:
       - name: invoice_id
+        data_type: bigint
+        constraints:
+          - type: not_null
         tests:
           - unique
           - not_null
+      - name: subscription_id
+        data_type: bigint
+        constraints:
+          - type: not_null
+      - name: customer_id
+        data_type: bigint
+        constraints:
+          - type: not_null
+      - name: invoice_date
+        data_type: date
+        constraints:
+          - type: not_null
       - name: invoice_amount
+        data_type: numeric
         tests:
           - not_negative
+          - not_implausibly_large:
+              arguments:
+                max_value: 2000
+      - name: payment_attempt_count
+        data_type: bigint
+      - name: has_succeeded_payment
+        data_type: boolean
+      - name: has_failed_attempt
+        data_type: boolean
+      - name: net_collected_amount
+        data_type: numeric
+      - name: refunded_amount
+        data_type: numeric
+      - name: last_payment_date
+        data_type: date
+      - name: outstanding_balance
+        data_type: numeric
 
   - name: fct_payments
     description: One row per payment attempt, netted against refunds.

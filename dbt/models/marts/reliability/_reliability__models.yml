@@ -1,0 +1,21 @@
+version: 2
+
+models:
+  - name: mart_volume_anomalies
+    description: >
+      One row per source per accounting period: row-count volume vs. a
+      3-period trailing average, with is_anomaly precomputed. See
+      docs/reliability_strategy.md for threshold calibration.
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [source_name, period_id]
+    columns:
+      - name: source_name
+        tests:
+          - accepted_values:
+              arguments:
+                values: ["orders", "invoices", "events"]
+      - name: period_id
+        tests:
+          - not_null

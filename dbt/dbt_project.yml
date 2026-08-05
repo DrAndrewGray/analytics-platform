@@ -31,6 +31,9 @@ models:
       finance:
         +materialized: table
         +schema: marts
+      reliability:
+        +materialized: table
+        +schema: marts
 
 seeds:
   meridian_analytics:

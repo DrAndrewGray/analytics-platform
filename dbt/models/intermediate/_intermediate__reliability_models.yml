@@ -1,0 +1,26 @@
+version: 2
+
+models:
+  - name: int_volume_by_period
+    description: >
+      Row counts per accounting period, one row per source per period
+      that source actually had data in.
+    columns:
+      - name: source_name
+        tests:
+          - not_null
+      - name: row_count
+        tests:
+          - not_negative
+
+  - name: int_volume_anomaly_by_period
+    description: >
+      int_volume_by_period, zero-filled across each source's own active
+      period range and compared against a 3-period trailing average.
+    columns:
+      - name: source_name
+        tests:
+          - not_null
+      - name: row_count
+        tests:
+          - not_negative

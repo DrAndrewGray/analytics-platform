@@ -1,0 +1,150 @@
+name: Reliability demo
+
+# Manually-triggered, not run on every push (see ci.yml for that): this
+# workflow deliberately breaks a clean database and asserts that the
+# expected control actually catches it. It's a demonstration of Phase 5's
+# controls, not a gate other work should have to pass — see
+# docs/reliability_strategy.md.
+on:
+  workflow_dispatch:
+    inputs:
+      scenario:
+        description: Failure scenario to inject (see scripts/inject_failure.py list)
+        required: true
+        type: choice
+        options:
+          - drop-column
+          - change-column-type
+          - bad-status
+          - duplicate-pk
+          - broken-fk
+          - volume-drop
+          - revenue-spike
+          - source-stale
+          - late-arriving-refund
+
+env:
+  POSTGRES_HOST: localhost
+  POSTGRES_PORT: 5432
+  POSTGRES_DB: meridian
+  POSTGRES_USER: meridian
+  POSTGRES_PASSWORD: meridian
+
+jobs:
+  demo:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: meridian
+          POSTGRES_USER: meridian
+          POSTGRES_PASSWORD: meridian
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U meridian"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.11
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Generate synthetic data (retail, billing, events)
+        run: |
+          uv run python scripts/generate_synthetic_data.py
+          uv run python scripts/generate_billing_data.py
+          uv run python scripts/generate_event_data.py
+
+      - name: Ingest into raw schemas
+        run: |
+          uv run python scripts/ingest.py
+          uv run python scripts/ingest_billing.py
+          uv run python scripts/ingest_events.py
+
+      - name: Install dbt packages
+        working-directory: dbt
+        run: uv run dbt deps --profiles-dir .
+
+      - name: Baseline dbt build (must be clean before injecting anything)
+        working-directory: dbt
+        run: uv run dbt build --profiles-dir . --target ci
+
+      - name: Inject failure — ${{ inputs.scenario }}
+        run: uv run python scripts/inject_failure.py "${{ inputs.scenario }}"
+
+      - name: dbt build (expected to fail for most scenarios)
+        id: dbt_build
+        working-directory: dbt
+        continue-on-error: true
+        run: uv run dbt build --profiles-dir . --target ci
+
+      - name: dbt source freshness (expected to fail for source-stale)
+        id: dbt_freshness
+        working-directory: dbt
+        continue-on-error: true
+        run: uv run dbt source freshness --profiles-dir . --target ci
+
+      - name: Generate alert report
+        if: always()
+        run: uv run python scripts/generate_alert_report.py
+
+      - name: Verify the expected control actually fired
+        if: always()
+        run: |
+          set -e
+          scenario="${{ inputs.scenario }}"
+          build_outcome="${{ steps.dbt_build.outcome }}"
+          freshness_outcome="${{ steps.dbt_freshness.outcome }}"
+          echo "dbt build outcome: $build_outcome"
+          echo "dbt source freshness outcome: $freshness_outcome"
+
+          case "$scenario" in
+            source-stale)
+              if [ "$freshness_outcome" != "failure" ]; then
+                echo "Expected dbt source freshness to fail for '$scenario', but it didn't."
+                exit 1
+              fi
+              ;;
+            late-arriving-refund)
+              if [ "$build_outcome" != "success" ]; then
+                echo "Expected dbt build to stay green for '$scenario' (late adjustments are normal, tracked activity, not a test failure) — see docs/metric_definitions_finance.md."
+                exit 1
+              fi
+              ;;
+            *)
+              if [ "$build_outcome" != "failure" ]; then
+                echo "Expected dbt build to fail for '$scenario', but it didn't."
+                exit 1
+              fi
+              ;;
+          esac
+          echo "Confirmed: the expected control fired for '$scenario'."
+
+      - name: Recover — regenerate clean data and rebuild
+        if: always()
+        run: |
+          uv run python scripts/generate_synthetic_data.py
+          uv run python scripts/generate_billing_data.py
+          uv run python scripts/generate_event_data.py
+          uv run python scripts/ingest.py
+          uv run python scripts/ingest_billing.py
+          uv run python scripts/ingest_events.py
+
+      - name: Verify recovery (dbt build must be clean again)
+        if: always()
+        working-directory: dbt
+        run: uv run dbt build --profiles-dir . --target ci

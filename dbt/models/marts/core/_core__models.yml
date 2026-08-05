@@ -30,25 +30,64 @@ models:
       One row per order. `revenue_minus_collected_variance` is non-zero
       whenever recognized order revenue and actually-collected cash
       diverge (refunds, failed payments) — the reconciliation signal that
-      the finance/revenue extension of this warehouse will build on.
+      the finance/revenue extension of this warehouse builds on.
+      Contracted (see docs/data_contracts.md): this feeds both Phase 4
+      finance marts, so a duplicate order_id or a silently changed
+      column here would double-count or misreport revenue everywhere
+      downstream.
+    config:
+      contract:
+        enforced: true
+    constraints:
+      - type: primary_key
+        columns: [order_id]
     columns:
       - name: order_id
+        data_type: bigint
+        constraints:
+          - type: not_null
         tests:
           - unique
           - not_null
       - name: customer_id
+        data_type: bigint
+        constraints:
+          - type: not_null
         tests:
           - not_null
           - relationships:
               arguments:
                 to: ref('dim_customers')
                 field: customer_id
+      - name: order_date
+        data_type: date
+        constraints:
+          - type: not_null
+      - name: order_status
+        data_type: text
+        constraints:
+          - type: not_null
+      - name: order_channel
+        data_type: text
+      - name: item_quantity
+        data_type: numeric
       - name: order_amount
+        data_type: numeric
         tests:
           - not_negative
+          - not_implausibly_large:
+              arguments:
+                max_value: 10000
       - name: amount_collected
+        data_type: numeric
         tests:
           - not_negative
+      - name: payment_attempt_count
+        data_type: bigint
+      - name: has_succeeded_payment
+        data_type: boolean
+      - name: revenue_minus_collected_variance
+        data_type: numeric
 
   - name: fct_order_items
     description: One row per order line item, denormalized for product/category analysis.
