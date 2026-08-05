@@ -13,7 +13,10 @@ with retail_in_recomputed as (
         on
             payments.payment_date >= periods.period_start_date
             and payments.payment_date <= periods.period_end_date
-    where payments.payment_status = 'succeeded'
+    -- 'refunded' counts toward cash_in too: see int_cash_movements_retail.sql —
+    -- a refunded retail payment still represents money that came in and
+    -- was later returned, not money that never moved.
+    where payments.payment_status in ('succeeded', 'refunded')
     group by periods.period_id
 ),
 

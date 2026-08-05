@@ -425,6 +425,31 @@ any mart-level number back to its raw source row.
    state plainly that revenue, collected cash, and variance are all
    tax-exclusive by design, since nothing in this dataset actually
    charges the tax it computes.
+6. **`int_cash_movements_retail`'s own doc comment claimed refunded
+   payments net to zero; the code didn't do that.** A refunded retail
+   order's single payment row has one `payment_date`, and the model's
+   `cash_in` only summed `payment_status = 'succeeded'` — so a refunded
+   payment contributed to `cash_out` alone, making every refunded retail
+   order a pure negative cash movement instead of the documented
+   net-zero. Caught in review by checking the code against its own
+   stated behavior. Fixed by including `'refunded'` in the `cash_in`
+   condition too (the payment did succeed before it was returned), with
+   `assert_refunded_retail_payments_net_to_zero.sql` added as a direct
+   regression guard and `assert_cash_movements_match_source_facts.sql`'s
+   independent recomputation updated to match.
+7. **A singular test can pass vacuously if its named scenario stops
+   existing.** `assert_late_refund_lands_in_its_own_cash_period.sql`
+   originally filtered to `refund_id = 1` in a CTE, then inner-joined it
+   to the mart — if that refund ever disappeared (a generator change, a
+   scenario renumbering), the CTE would return zero rows, the inner join
+   would return zero rows, and the test would report a pass despite
+   testing nothing. Fixed by anchoring the query on a fixed
+   `select 1 as refund_id` row and left-joining everything else, so a
+   missing refund, a missing adjustment period, or an undersized
+   `billing_cash_out` all produce an explicit failure row instead of
+   silence. Verified by simulating the missing-scenario case directly
+   against the warehouse and confirming the old query returned zero rows
+   while the new one returns a failure.
 
 ## What's tested, and why
 
@@ -505,7 +530,14 @@ any mart-level number back to its raw source row.
   customer-7 scenario to `mart_cash_movements_by_period` specifically:
   its refund must count as cash out in *its own* period (26), not its
   invoice's booking period (25) — the exact conflation described in
-  "Bugs this caught," above.
+  "Bugs this caught," above. Anchored on a fixed expected row (not an
+  inner join keyed to the scenario's own existence), so the test fails
+  loudly if the named refund ever goes missing instead of passing
+  vacuously.
+- **`assert_refunded_retail_payments_net_to_zero.sql`** — a refunded
+  retail payment's amount must appear in both `retail_cash_in` and
+  `retail_cash_out` for its period, not just `cash_out`; guards the
+  netting bug described in "Bugs this caught," above.
 
 ## Running it locally
 

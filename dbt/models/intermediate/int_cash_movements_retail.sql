@@ -36,7 +36,13 @@ joined as (
 aggregated as (
     select
         period_id,
-        sum(case when payment_status = 'succeeded' then amount else 0 end) as cash_in,
+        -- 'refunded' counts toward cash_in too: the single row represents
+        -- a payment that succeeded and was later returned, not a payment
+        -- that never happened. Omitting it here would make every refunded
+        -- retail order a pure negative movement instead of netting to
+        -- zero, contradicting the netting behavior described above.
+        sum(case when payment_status in ('succeeded', 'refunded') then amount else 0 end)
+            as cash_in,
         sum(case when payment_status = 'refunded' then amount else 0 end) as cash_out
     from joined
     group by period_id
