@@ -1,4 +1,4 @@
--- Singular test: mart_revenue_reconciliation_by_period's total_booked_revenue
+-- Singular test: mart_revenue_reconciliation_by_period's total_net_booked_revenue
 -- must match an independent recomputation directly from fct_orders and
 -- fct_invoices, bypassing int_revenue_by_period_retail/billing entirely.
 -- This catches bugs in the period-assignment or aggregation logic itself,
@@ -32,7 +32,7 @@ recomputed as (
     select
         periods.period_id,
         coalesce(retail_recomputed.booked_revenue, 0)
-        + coalesce(billing_recomputed.booked_revenue, 0) as recomputed_total_booked_revenue
+        + coalesce(billing_recomputed.booked_revenue, 0) as recomputed_total_net_booked_revenue
     from {{ ref('dim_accounting_periods') }} as periods
     left join retail_recomputed on periods.period_id = retail_recomputed.period_id
     left join billing_recomputed on periods.period_id = billing_recomputed.period_id
@@ -40,8 +40,10 @@ recomputed as (
 
 select
     mart.period_id,
-    mart.total_booked_revenue,
-    recomputed.recomputed_total_booked_revenue
+    mart.total_net_booked_revenue,
+    recomputed.recomputed_total_net_booked_revenue
 from {{ ref('mart_revenue_reconciliation_by_period') }} as mart
 inner join recomputed on mart.period_id = recomputed.period_id
-where round(mart.total_booked_revenue::numeric, 2) != round(recomputed.recomputed_total_booked_revenue::numeric, 2)
+where
+    round(mart.total_net_booked_revenue::numeric, 2)
+    != round(recomputed.recomputed_total_net_booked_revenue::numeric, 2)

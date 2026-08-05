@@ -282,7 +282,25 @@ and `int_revenue_by_period_billing` each aggregate their own
 already-tested fact table (`fct_orders`, `fct_invoices`) rather than
 re-deriving revenue from raw rows a second time;
 `mart_revenue_reconciliation_by_period` then combines both into one
-company-wide `variance` (booked minus collected) per period.
+company-wide `variance` (`total_net_booked_revenue` minus
+`total_collected_against_bookings`) per period.
+
+**Booking-period and cash-movement are two different questions, so
+they're two different marts, not one column doing double duty.**
+`mart_revenue_reconciliation_by_period`'s `_against_bookings` columns
+answer "how much of what was booked in this period has since been
+collected or refunded" — by the *order/invoice's* date, however late the
+cash arrived. `mart_cash_movements_by_period` answers "how much cash
+actually moved in this period" — by `payment_date`/`refund_date`
+directly, independent of when the underlying booking happened. They
+disagree whenever a payment or refund crosses a period boundary from its
+order/invoice (44 billing invoice/payment pairs do, in this dataset),
+and both questions are real ones a finance report needs to answer —
+picking one and hiding the other would just move the ambiguity
+somewhere less visible. Also note: `total_net_booked_revenue` and every
+`_against_bookings`/cash column are tax-exclusive throughout —
+`tax_amount` is tracked separately, since nothing in this dataset
+actually charges the tax it computes.
 
 **A billing refund is a "late adjustment" if its invoice's accounting
 period was already closed (`closed_at` is non-null and in the past) by
@@ -314,15 +332,22 @@ mart_revenue_reconciliation_by_period (period_id=25)
   -> raw_billing.invoices (invoice_id=77, invoice_date=2025-01-01, amount=9.99)
 ```
 
-That same invoice also drives the period-close-adjustment story: it was
-paid in full on 2025-01-01, its accounting period (`period_id=25`)
-closed on 2025-02-10, and a $9.99 refund landed on 2025-02-20 — 10 days
-later. `fct_period_close_adjustments` (`refund_id=1`) carries
+That same invoice also drives the period-close-adjustment story, and
+shows the booking-period/cash-movement split concretely: it was paid in
+full on 2025-01-01, its accounting period (`period_id=25`) closed on
+2025-02-10, and a $9.99 refund landed on 2025-02-20 — 10 days later.
+`fct_period_close_adjustments` (`refund_id=1`) carries
 `original_period_id=25`, `adjustment_period_id=26`,
-`is_late_adjustment=true`, `days_after_close=10`. No separate
-traceability mart is needed for this: every model here is `ref()`-built
-on tested upstream models, so `dbt docs` lineage already shows the exact
-path from any mart-level number back to its raw source row.
+`is_late_adjustment=true`, `days_after_close=10`. That single $9.99
+shows up differently in each mart:
+`mart_revenue_reconciliation_by_period.billing_refunded_amount_against_bookings`
+counts it against period 25 (the invoice's booking period), while
+`mart_cash_movements_by_period.billing_cash_out` counts it against
+period 26 (the period the refund cash itself moved in) — both correct,
+both answering a different question. No separate traceability mart is
+needed for any of this: every model here is `ref()`-built on tested
+upstream models, so `dbt docs` lineage already shows the exact path from
+any mart-level number back to its raw source row.
 
 ### Bugs this caught
 
@@ -354,7 +379,52 @@ path from any mart-level number back to its raw source row.
    mart exists to surface. Fixed by casting every money column to
    `::numeric` at the staging boundary, the layer whose job is type
    correctness, rather than patching each downstream symptom
-   individually.
+   individually. One more instance of the exact same pattern
+   (`stg_billing__payments.payment_amount`) surfaced during a later
+   review pass, once the cash-movement models below started aggregating
+   it too — the same fix, applied a beat later.
+3. **The first version of `mart_revenue_reconciliation_by_period`
+   conflated two different questions under one set of column names.**
+   `collected_amount` and `refunded_amount` were computed by joining
+   payments/refunds to the *order or invoice's own* accounting period —
+   which actually answers "how much of what was booked in this period
+   has been collected/refunded," not "how much cash moved in this
+   period." The two are the same number only when a payment or refund
+   never crosses a period boundary from its booking, which isn't
+   guaranteed — 44 billing invoice/payment pairs in this dataset land in
+   different months, and the deliberately-late refund scenario
+   (customer 7, above) is a clean case of a refund's true cash period
+   (26) differing from its invoice's booking period (25). The original
+   mart silently reported it under period 25. Caught in review, not by
+   a test — every existing test checked internal consistency of the
+   booking-period number, which was self-consistent and simply
+   answering a different question than its name implied. Fixed by
+   splitting into two marts (`mart_revenue_reconciliation_by_period` for
+   booking-period, new `mart_cash_movements_by_period` for
+   payment-date/refund-date cash), renaming the booking-period columns
+   to say `_against_bookings` explicitly, and adding
+   `assert_late_refund_lands_in_its_own_cash_period.sql` to pin the
+   customer-7 case to the correct mart going forward.
+4. **`total_refunded_amount` silently excluded retail entirely**, despite
+   `raw.payments` carrying a `status = 'refunded'` row with a real
+   amount. It wasn't a missing feature so much as a side effect of bug 3
+   above: the booking-period view is legitimately billing-only here
+   (retail's booked revenue already excludes refunded orders, since
+   they're never `order_status = 'completed'` — there's nothing to net),
+   but that's not the same as retail refund cash not existing. The new
+   `mart_cash_movements_by_period.retail_cash_out` now surfaces it,
+   sourced directly from `stg_payments`.
+5. **The docs' own tax equation contradicted what the mart actually
+   computed.** `docs/metric_definitions_finance.md` stated
+   `booked_revenue = net_revenue + tax_amount`, implying booked revenue
+   should be tax-*inclusive*, while the mart's `total_booked_revenue`
+   was always the tax-*exclusive* order/invoice amount, with `variance`
+   comparing it against equally tax-exclusive collected cash — internally
+   consistent, but not what the stated equation said. Fixed by renaming
+   the column to `total_net_booked_revenue` and rewriting the docs to
+   state plainly that revenue, collected cash, and variance are all
+   tax-exclusive by design, since nothing in this dataset actually
+   charges the tax it computes.
 
 ## What's tested, and why
 
@@ -413,11 +483,16 @@ path from any mart-level number back to its raw source row.
   monthly sequence, since a gap or overlap would let a transaction land
   in zero or two periods.
 - **`assert_reconciliation_matches_source_facts.sql`** — recomputes
-  `total_booked_revenue` directly from `fct_orders`/`fct_invoices`,
+  `total_net_booked_revenue` directly from `fct_orders`/`fct_invoices`,
   bypassing `int_revenue_by_period_retail`/`billing` entirely, and checks
   it matches `mart_revenue_reconciliation_by_period`. Catches a bug in
   the period-assignment or aggregation logic itself, not just one shared
   between the mart and its own intermediates.
+- **`assert_cash_movements_match_source_facts.sql`** — the same
+  independent-recomputation pattern, applied to
+  `mart_cash_movements_by_period`: recomputes `total_cash_in`/
+  `total_cash_out` directly from `stg_payments`/`stg_billing__payments`/
+  `stg_billing__refunds`, bypassing `int_cash_movements_retail`/`billing`.
 - **`assert_late_adjustment_scenario_exists.sql`** — a named-scenario
   test: at least one refund must actually trigger `is_late_adjustment`,
   guarding against that branch silently regressing to always-false while
@@ -426,6 +501,11 @@ path from any mart-level number back to its raw source row.
   `days_after_close` must be populated (and positive) exactly when
   `is_late_adjustment` is true, and null otherwise; guards the two
   columns against drifting apart from their shared condition.
+- **`assert_late_refund_lands_in_its_own_cash_period.sql`** — pins the
+  customer-7 scenario to `mart_cash_movements_by_period` specifically:
+  its refund must count as cash out in *its own* period (26), not its
+  invoice's booking period (25) — the exact conflation described in
+  "Bugs this caught," above.
 
 ## Running it locally
 

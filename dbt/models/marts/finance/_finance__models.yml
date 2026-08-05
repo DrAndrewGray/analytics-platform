@@ -22,13 +22,35 @@ models:
 
   - name: mart_revenue_reconciliation_by_period
     description: >
-      One row per accounting period: booked revenue, tax, and cash
-      collected, combined across retail and billing.
+      One row per accounting period: net (tax-exclusive) booked revenue
+      and cash collected against those bookings, combined across retail
+      and billing. Booking-period attribution throughout — see
+      mart_cash_movements_by_period for the by-payment-date/refund-date
+      view of the same money.
     columns:
       - name: period_id
         tests:
           - unique
           - not_null
-      - name: total_booked_revenue
+      - name: total_net_booked_revenue
+        tests:
+          - not_negative
+
+  - name: mart_cash_movements_by_period
+    description: >
+      One row per accounting period: cash that actually moved in that
+      period (payment_date for inflows, refund_date for outflows),
+      combined across retail and billing. Cash-movement attribution
+      throughout — see mart_revenue_reconciliation_by_period for the
+      booking-period view of the same money.
+    columns:
+      - name: period_id
+        tests:
+          - unique
+          - not_null
+      - name: total_cash_in
+        tests:
+          - not_negative
+      - name: total_cash_out
         tests:
           - not_negative

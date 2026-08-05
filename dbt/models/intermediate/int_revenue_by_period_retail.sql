@@ -2,6 +2,12 @@
 -- assigned to their accounting period by order_date, with tax computed
 -- from the customer's region. Aggregates fct_orders' own tested revenue
 -- numbers rather than re-deriving them from raw tables.
+--
+-- No refunded_amount column here, unlike billing: a refunded retail
+-- order never has order_status = 'completed', so it's excluded from
+-- booked_revenue entirely rather than booked and later netted against a
+-- refund. tax_amount is a separate illustrative line, not included in
+-- booked_revenue or collected_amount — both of those are net-of-tax.
 with orders as (
     select * from {{ ref('fct_orders') }}
     where order_status = 'completed'

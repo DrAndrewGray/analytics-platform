@@ -36,3 +36,34 @@ models:
       - name: refund_date
         tests:
           - not_null
+
+  - name: int_cash_movements_retail
+    description: >
+      Retail cash in/out by the period payment_date falls in, not the
+      order's own booking period. See model comment for how a refunded
+      order's single payment_date is used for both sides.
+    columns:
+      - name: period_id
+        tests:
+          - unique
+      - name: cash_in
+        tests:
+          - not_negative
+      - name: cash_out
+        tests:
+          - not_negative
+
+  - name: int_cash_movements_billing
+    description: >
+      Billing cash in/out by payment_date (inflows) and refund_date
+      (outflows) respectively, not the invoice's own booking period.
+    columns:
+      - name: period_id
+        tests:
+          - unique
+      - name: cash_in
+        tests:
+          - not_negative
+      - name: cash_out
+        tests:
+          - not_negative

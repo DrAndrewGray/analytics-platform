@@ -54,3 +54,17 @@ therefore scoped to billing only; retail still gets period-level revenue
 reconciliation (booked vs. collected by month), just not the
 adjustment-timing drill-down. See
 `docs/metric_definitions_finance.md`.
+
+## Two questions that look alike but aren't: booked vs. moved
+
+"How much revenue did we book in March" and "how much cash moved through
+the business in March" are different questions whenever a payment or
+refund crosses a month boundary from the order/invoice that generated
+it — which happens routinely (44 billing invoice/payment pairs in this
+dataset alone land in different months). Collapsing them into one
+column, as the first version of this phase did, silently answers one
+question while labeling the result as if it were the other. Both
+questions are legitimate and answerable from this data, so both get
+their own mart: `mart_revenue_reconciliation_by_period` (booking-period)
+and `mart_cash_movements_by_period` (cash-movement). See
+`docs/metric_definitions_finance.md` for the exact column-level split.
