@@ -579,6 +579,38 @@ real numbers, in `docs/incidents/`.
    number against `dbt build`'s own printed summary line and noticing
    there was no principled reason they should have matched. Fixed by
    resolving each result's `resource_type` from `manifest.json` first.
+4. **`scripts/inject_failure.py`'s own `duplicate-pk` scenario shipped
+   with an inaccurate claim about its own mechanism.** Its docstring
+   said the duplicate would be caught by `fct_orders`' contracted
+   `primary_key` constraint. Running it for real showed otherwise: dbt
+   skips a model once an upstream test on its inputs fails, and
+   `unique_stg_orders_order_id` — a plain generic test at the staging
+   layer — already catches the duplicate before `fct_orders` is ever
+   attempted. The contract's `primary_key` enforcement never actually
+   gets exercised by this scenario. Fixed the scenario's own message and
+   `scripts/generate_alert_report.py`'s `SCENARIO_EXPECTATIONS` mapping
+   to match what actually happens, verified against real `dbt build`
+   output rather than the mechanism's original (plausible-sounding, and
+   wrong) design intent.
+5. **The reliability-demo workflow itself had never actually been run**
+   when the first version of this phase shipped — every scenario was
+   verified locally against the real dev database, but the GitHub
+   Actions workflow wrapping them wasn't. Caught in review: (a)
+   `generate_alert_report.py` exits 1 by design whenever it finds a
+   failure, which is the *correct* outcome for 7 of 9 scenarios, but the
+   step running it had no `continue-on-error`, so the job went red
+   before the actual verification step ran; (b) the automated recovery
+   only regenerated and re-ingested data, which — per Incident
+   001/002 — isn't enough for the two schema-shaped scenarios; (c) the
+   verification step only checked whether `dbt build` failed *at all*,
+   which an unrelated failure would have satisfied just as well as the
+   intended one. Fixed by adding `continue-on-error` to the alert step,
+   adding a scenario-aware `DROP TABLE ... CASCADE` recovery step for
+   `drop-column`/`change-column-type`, and adding
+   `generate_alert_report.py --assert-scenario` (checks a specific
+   failing node's name, not just build/fail) — then re-running all nine
+   scenarios against the real database to verify each fix, the same way
+   every other claim in this phase was verified.
 
 ## What's tested, and why
 
@@ -687,7 +719,9 @@ real numbers, in `docs/incidents/`.
   `information_schema` for every raw table against a checked-in
   snapshot (`docs/expected_source_schemas.json`); the practical
   equivalent of a source-level contract, since dbt's own contract
-  primitive is model-level only.
+  primitive is model-level only. Runs in `ci.yml` right after ingestion
+  on every push, not just on demand — otherwise the snapshot itself
+  could drift out of sync with the generators unnoticed.
 
 ## Running it locally
 
@@ -762,19 +796,28 @@ defeated this isolation for snapshots specifically.
 
 GitHub Actions spins up a real Postgres service container, regenerates
 the retail, billing, and event synthetic data fresh (so source freshness
-checks always pass), runs the Python test suite, then runs `dbt build`
-against the `ci` target on every push — the warehouse either builds and
-passes its tests, or the check fails. See `.github/workflows/ci.yml`.
+checks always pass), runs `scripts/check_source_schema.py` against the
+freshly-ingested data (so the checked-in schema snapshot can't silently
+drift out of sync with what the generators actually produce), runs the
+Python test suite, then runs `dbt build` against the `ci` target on
+every push — the warehouse either builds and passes its tests, or the
+check fails. See `.github/workflows/ci.yml`.
 
 A second, manually-triggered workflow
 (`.github/workflows/reliability-demo.yml`) exists specifically to break
 things: pick a scenario from `scripts/inject_failure.py list`, and it
-builds a clean warehouse, injects that failure, asserts the expected
-control actually fires (not just "something failed" — the specific
-model/test dbt build or freshness check was expected to catch), then
-recovers and verifies a clean rebuild. Kept separate from `ci.yml` on
-purpose — it's a demonstration of Phase 5's controls, not a gate normal
-work should have to pass.
+builds a clean warehouse, injects that failure, asserts the *specific*
+expected control fires — a named test or model
+(`scripts/generate_alert_report.py --assert-scenario`), the specific
+source's freshness status, or `check_source_schema.py` detecting drift,
+depending on the scenario — not just "the build went red," which an
+unrelated failure could satisfy too. Then it recovers (including the
+schema-shaped-failure-specific `DROP TABLE ... CASCADE` step
+`docs/runbook.md` documents — plain regenerate-and-reingest isn't
+enough for `drop-column`/`change-column-type`) and verifies both a
+clean rebuild and a clean schema-drift check. Kept separate from
+`ci.yml` on purpose — it's a demonstration of Phase 5's controls, not a
+gate normal work should have to pass.
 
 ## Roadmap
 

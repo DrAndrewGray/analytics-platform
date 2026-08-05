@@ -86,6 +86,11 @@ jobs:
       - name: Inject failure — ${{ inputs.scenario }}
         run: uv run python scripts/inject_failure.py "${{ inputs.scenario }}"
 
+      - name: Check source schema (expected to detect drift for drop-column / change-column-type)
+        id: check_schema
+        continue-on-error: true
+        run: uv run python scripts/check_source_schema.py
+
       - name: dbt build (expected to fail for most scenarios)
         id: dbt_build
         working-directory: dbt
@@ -98,41 +103,64 @@ jobs:
         continue-on-error: true
         run: uv run dbt source freshness --profiles-dir . --target ci
 
+      # continue-on-error: this script exits 1 by design whenever it finds a
+      # failure (see its own docstring) — which is the CORRECT, expected
+      # outcome for most scenarios here. Without this, every successfully
+      # detected failure would mark the whole job red before the actual
+      # verification step below gets to run. --assert-scenario's own exit
+      # code, in that next step, is what actually decides the job's result.
       - name: Generate alert report
+        id: alert
         if: always()
-        run: uv run python scripts/generate_alert_report.py
+        continue-on-error: true
+        run: uv run python scripts/generate_alert_report.py --output alert.json
 
       - name: Verify the expected control actually fired
         if: always()
         run: |
           set -e
           scenario="${{ inputs.scenario }}"
-          build_outcome="${{ steps.dbt_build.outcome }}"
+          schema_outcome="${{ steps.check_schema.outcome }}"
           freshness_outcome="${{ steps.dbt_freshness.outcome }}"
-          echo "dbt build outcome: $build_outcome"
+          echo "check_source_schema outcome: $schema_outcome"
           echo "dbt source freshness outcome: $freshness_outcome"
 
           case "$scenario" in
             source-stale)
-              if [ "$freshness_outcome" != "failure" ]; then
-                echo "Expected dbt source freshness to fail for '$scenario', but it didn't."
+              status=$(jq -r '.results[] | select(.unique_id=="source.meridian_analytics.raw.customers") | .status' dbt/target/sources.json)
+              echo "raw.customers freshness status: $status"
+              if [ "$status" != "error" ]; then
+                echo "Expected source.meridian_analytics.raw.customers to report 'error' freshness, got '$status'."
                 exit 1
               fi
               ;;
-            late-arriving-refund)
-              if [ "$build_outcome" != "success" ]; then
-                echo "Expected dbt build to stay green for '$scenario' (late adjustments are normal, tracked activity, not a test failure) — see docs/metric_definitions_finance.md."
+            drop-column|change-column-type)
+              if [ "$schema_outcome" != "failure" ]; then
+                echo "Expected scripts/check_source_schema.py to detect drift for '$scenario', but it reported no drift."
                 exit 1
               fi
+              uv run python scripts/generate_alert_report.py --assert-scenario "$scenario"
               ;;
             *)
-              if [ "$build_outcome" != "failure" ]; then
-                echo "Expected dbt build to fail for '$scenario', but it didn't."
-                exit 1
-              fi
+              # Node-specific assertion, not just "did the build fail" — an
+              # unrelated failure would otherwise satisfy this check too.
+              # See scripts/generate_alert_report.py's SCENARIO_EXPECTATIONS.
+              uv run python scripts/generate_alert_report.py --assert-scenario "$scenario"
               ;;
           esac
           echo "Confirmed: the expected control fired for '$scenario'."
+
+      - name: Recover — restore raw table structure for schema-shaped scenarios
+        if: always()
+        run: |
+          scenario="${{ inputs.scenario }}"
+          case "$scenario" in
+            drop-column|change-column-type)
+              # Regenerate-and-reingest alone can't recover from these — see
+              # scripts/recover_raw_table.py's own docstring for why.
+              uv run python scripts/recover_raw_table.py raw.orders
+              ;;
+          esac
 
       - name: Recover — regenerate clean data and rebuild
         if: always()
@@ -148,3 +176,7 @@ jobs:
         if: always()
         working-directory: dbt
         run: uv run dbt build --profiles-dir . --target ci
+
+      - name: Verify recovery (source schema drift must be gone)
+        if: always()
+        run: uv run python scripts/check_source_schema.py

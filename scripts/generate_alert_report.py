@@ -12,6 +12,14 @@ Usage:
     uv run python scripts/generate_alert_report.py                # human-readable
     uv run python scripts/generate_alert_report.py --json          # structured JSON to stdout
     uv run python scripts/generate_alert_report.py --output f.json # also write JSON to a file
+    uv run python scripts/generate_alert_report.py --assert-scenario drop-column
+        # exits 1 unless the SPECIFIC node scripts/inject_failure.py's
+        # drop-column scenario is expected to break actually appears
+        # among the failures (or, for scenarios expected to stay green,
+        # unless the run is actually clean) — see SCENARIO_EXPECTATIONS,
+        # below. Used by .github/workflows/reliability-demo.yml so the
+        # demo proves the *right* control fired, not just that
+        # something, anything, failed.
 
 Also queries the live database (if reachable) for currently-open late
 period-close adjustments (fct_period_close_adjustments.is_late_adjustment)
@@ -44,6 +52,26 @@ RUN_RESULTS_PATH = TARGET_DIR / "run_results.json"
 MANIFEST_PATH = TARGET_DIR / "manifest.json"
 
 FAILED_STATUSES = {"fail", "error"}
+
+# One entry per scripts/inject_failure.py scenario that's expected to show up
+# as a dbt build/test failure (source-stale is freshness-based, checked
+# separately in the reliability-demo workflow — see docs/runbook.md for why
+# that's a different artifact/command entirely). name_contains is matched
+# against a failing finding's `name` field; picked from what each scenario
+# actually produced when run for real — see docs/incidents/.
+SCENARIO_EXPECTATIONS: dict[str, dict[str, Any]] = {
+    "drop-column": {"expect_failure": True, "name_contains": "stg_orders"},
+    "change-column-type": {"expect_failure": True, "name_contains": "fct_orders"},
+    "bad-status": {"expect_failure": True, "name_contains": "order_status"},
+    "duplicate-pk": {"expect_failure": True, "name_contains": "unique_stg_orders_order_id"},
+    "broken-fk": {"expect_failure": True, "name_contains": "order_items_order_id"},
+    "volume-drop": {"expect_failure": True, "name_contains": "assert_no_volume_anomaly"},
+    "revenue-spike": {
+        "expect_failure": True,
+        "name_contains": "not_implausibly_large_fct_orders_order_amount",
+    },
+    "late-arriving-refund": {"expect_failure": False},
+}
 
 
 def load_json(path: Path) -> dict[str, Any]:
@@ -169,10 +197,47 @@ def print_human_readable(alert: dict[str, Any]) -> None:
         )
 
 
+def check_scenario(scenario: str, alert: dict[str, Any]) -> tuple[bool, str]:
+    """Did the SPECIFIC control this scenario is supposed to trip actually fire?
+
+    Deliberately stricter than "did the build fail": an unrelated failure
+    (a flaky test, a different regression) would satisfy a plain
+    build-outcome check without the scenario's own control having done
+    anything at all.
+    """
+    expectation = SCENARIO_EXPECTATIONS.get(scenario)
+    if expectation is None:
+        return False, f"No expectation registered for scenario '{scenario}'."
+
+    if not expectation["expect_failure"]:
+        if alert["failure_count"] == 0:
+            return True, f"'{scenario}' expected a clean build, and got one."
+        return False, (
+            f"'{scenario}' expected a clean build, but {alert['failure_count']} "
+            "failure(s) were found."
+        )
+
+    name_contains = expectation["name_contains"]
+    matches = [f for f in alert["findings"] if name_contains in f["name"]]
+    if matches:
+        matched_names = ", ".join(f["name"] for f in matches)
+        return True, f"'{scenario}' expected a failure matching '{name_contains}': {matched_names}."
+    return False, (
+        f"'{scenario}' expected a failure matching '{name_contains}', but none of "
+        f"the {alert['failure_count']} failure(s) found matched: "
+        f"{[f['name'] for f in alert['findings']]}"
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--json", action="store_true", help="Print structured JSON to stdout.")
     parser.add_argument("--output", type=Path, help="Also write the JSON alert to this path.")
+    parser.add_argument(
+        "--assert-scenario",
+        choices=sorted(SCENARIO_EXPECTATIONS),
+        help="Exit 1 unless this scenario's specific expected control fired.",
+    )
     args = parser.parse_args()
 
     manifest = load_json(MANIFEST_PATH)
@@ -188,6 +253,11 @@ def main() -> None:
     if args.output:
         args.output.write_text(json.dumps(alert, indent=2) + "\n")
         print(f"\nWrote {args.output}")
+
+    if args.assert_scenario:
+        passed, message = check_scenario(args.assert_scenario, alert)
+        print(f"\n{'PASS' if passed else 'FAIL'}: {message}")
+        sys.exit(0 if passed else 1)
 
     sys.exit(1 if alert["failure_count"] > 0 else 0)
 

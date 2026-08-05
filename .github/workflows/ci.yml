@@ -73,6 +73,9 @@ jobs:
       - name: Ingest into raw_events schema
         run: uv run python scripts/ingest_events.py
 
+      - name: Check source schema against the checked-in snapshot
+        run: uv run python scripts/check_source_schema.py
+
       - name: Run pytest
         run: uv run pytest
 

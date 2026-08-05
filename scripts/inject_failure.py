@@ -104,11 +104,12 @@ def scenario_duplicate_pk(engine: Engine) -> str:
     return (
         f"Inserted a second raw.orders row with order_id={row.order_id} "
         "(raw.orders has no primary key constraint, so this succeeds). "
-        "fct_orders is contracted with a primary_key constraint on "
-        "order_id, so the next `dbt build` will fail at the database "
-        "level trying to materialize fct_orders — before "
-        "unique_fct_orders_order_id ever gets a chance to run as a "
-        "post-build test."
+        "Caught by unique_stg_orders_order_id at the staging layer, "
+        "before fct_orders is even attempted — dbt skips downstream "
+        "models when an upstream test fails, so fct_orders' own "
+        "primary_key contract constraint never actually gets exercised "
+        "by this scenario specifically (verified empirically: the "
+        "failure is the staging test, not a contract violation)."
     )
 
 

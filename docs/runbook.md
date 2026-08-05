@@ -77,10 +77,15 @@ injecting and recovering can recreate the exact view that was blocking
 it):
 
 ```
-psql -c "DROP TABLE raw.<table> CASCADE;"
+uv run python scripts/recover_raw_table.py raw.<table>
 uv run python scripts/ingest.py   # (or ingest_billing.py / ingest_events.py)
 cd dbt && uv run dbt build --profiles-dir .
 ```
+
+(`scripts/recover_raw_table.py` is just `DROP TABLE ... CASCADE`, run
+through a script instead of `psql` so `.github/workflows/reliability-demo.yml`
+can call it too — see that workflow's own recovery step for
+`drop-column`/`change-column-type`.)
 
 **For a late-closed-period adjustment**: there's usually nothing to
 recover — it's expected behavior, not a fault. Confirm the number is
