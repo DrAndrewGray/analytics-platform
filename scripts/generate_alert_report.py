@@ -20,6 +20,13 @@ Usage:
         # below. Used by .github/workflows/reliability-demo.yml so the
         # demo proves the *right* control fired, not just that
         # something, anything, failed.
+    uv run python scripts/generate_alert_report.py --assert-scenario late-arriving-refund \
+        --baseline-late-adjustments 1
+        # for the one scenario that's expected to stay green: also
+        # requires the informational late_adjustments section to have
+        # grown past the given baseline count, not just "the build
+        # didn't fail" — a bug in fetch_late_adjustments() itself, or in
+        # is_late_adjustment upstream, would otherwise pass silently.
 
 Also queries the live database (if reachable) for currently-open late
 period-close adjustments (fct_period_close_adjustments.is_late_adjustment)
@@ -197,24 +204,53 @@ def print_human_readable(alert: dict[str, Any]) -> None:
         )
 
 
-def check_scenario(scenario: str, alert: dict[str, Any]) -> tuple[bool, str]:
+def check_scenario(
+    scenario: str, alert: dict[str, Any], baseline_late_adjustments: int | None = None
+) -> tuple[bool, str]:
     """Did the SPECIFIC control this scenario is supposed to trip actually fire?
 
     Deliberately stricter than "did the build fail": an unrelated failure
     (a flaky test, a different regression) would satisfy a plain
     build-outcome check without the scenario's own control having done
-    anything at all.
+    anything at all. For late-arriving-refund specifically, "the build
+    stayed green" isn't enough either — a bug in fetch_late_adjustments()
+    or in is_late_adjustment upstream could make the new adjustment
+    silently fail to show up while the build stays green for an unrelated
+    reason (nothing broke because nothing ran). --baseline-late-adjustments
+    closes that gap by requiring the informational count to have actually
+    grown, not just checking that it's non-negative.
     """
     expectation = SCENARIO_EXPECTATIONS.get(scenario)
     if expectation is None:
         return False, f"No expectation registered for scenario '{scenario}'."
 
     if not expectation["expect_failure"]:
-        if alert["failure_count"] == 0:
+        if alert["failure_count"] != 0:
+            return False, (
+                f"'{scenario}' expected a clean build, but {alert['failure_count']} "
+                "failure(s) were found."
+            )
+        if baseline_late_adjustments is None:
             return True, f"'{scenario}' expected a clean build, and got one."
+
+        late_adjustments = alert.get("late_adjustments")
+        if late_adjustments is None:
+            return False, (
+                f"'{scenario}' expected the late_adjustments count to grow past "
+                f"{baseline_late_adjustments}, but the database wasn't reachable "
+                "to check it."
+            )
+        current = len(late_adjustments)
+        if current > baseline_late_adjustments:
+            return True, (
+                f"'{scenario}' expected a clean build with a new late adjustment, "
+                f"and got one: late_adjustments count went from "
+                f"{baseline_late_adjustments} to {current}."
+            )
         return False, (
-            f"'{scenario}' expected a clean build, but {alert['failure_count']} "
-            "failure(s) were found."
+            f"'{scenario}' expected the late_adjustments count to grow past "
+            f"{baseline_late_adjustments}, but it's still {current} — the build "
+            "stayed green, but no new late adjustment actually showed up."
         )
 
     name_contains = expectation["name_contains"]
@@ -238,6 +274,15 @@ def main() -> None:
         choices=sorted(SCENARIO_EXPECTATIONS),
         help="Exit 1 unless this scenario's specific expected control fired.",
     )
+    parser.add_argument(
+        "--baseline-late-adjustments",
+        type=int,
+        help=(
+            "Late-adjustment count captured before injecting late-arriving-refund; "
+            "required alongside it to confirm the count actually grew, not just "
+            "that the build stayed green. Ignored for every other scenario."
+        ),
+    )
     args = parser.parse_args()
 
     manifest = load_json(MANIFEST_PATH)
@@ -255,7 +300,9 @@ def main() -> None:
         print(f"\nWrote {args.output}")
 
     if args.assert_scenario:
-        passed, message = check_scenario(args.assert_scenario, alert)
+        passed, message = check_scenario(
+            args.assert_scenario, alert, args.baseline_late_adjustments
+        )
         print(f"\n{'PASS' if passed else 'FAIL'}: {message}")
         sys.exit(0 if passed else 1)
 

@@ -18,28 +18,38 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import re
 
 from dotenv import load_dotenv
 from sqlalchemy import text
 
+import scripts.ingest as ingest
+import scripts.ingest_billing as ingest_billing
+import scripts.ingest_events as ingest_events
 from scripts.ingest import get_engine
 
 load_dotenv()
 
-# schema.table only, both simple identifiers — this drops a table by name
-# built from CLI input, so reject anything that isn't exactly that shape
-# rather than interpolating an arbitrary argument into DDL.
-_TABLE_PATTERN = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*\.[a-zA-Z_][a-zA-Z0-9_]*$")
+# Built from the same TABLES/RAW_SCHEMA constants the ingest scripts
+# themselves use, not a separately-maintained list — this script runs real
+# DDL (DROP TABLE ... CASCADE) from a CLI argument, so it only ever
+# touches a table ingestion actually owns and can recreate, never an
+# arbitrary identifier that happens to be shaped like schema.table (a
+# staging view, a mart, a Postgres system table).
+APPROVED_TABLES = frozenset(
+    f"{module.RAW_SCHEMA}.{table}"
+    for module in (ingest, ingest_billing, ingest_events)
+    for table in module.TABLES
+)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("table", help="schema.table to drop, e.g. raw.orders")
+    parser.add_argument(
+        "table",
+        choices=sorted(APPROVED_TABLES),
+        help="schema.table to drop — must be one ingestion actually owns.",
+    )
     args = parser.parse_args()
-
-    if not _TABLE_PATTERN.match(args.table):
-        raise SystemExit(f"'{args.table}' doesn't look like schema.table — refusing to run DDL.")
 
     engine = get_engine()
     with engine.begin() as conn:

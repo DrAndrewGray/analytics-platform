@@ -83,6 +83,19 @@ jobs:
         working-directory: dbt
         run: uv run dbt build --profiles-dir . --target ci
 
+      # Needed to verify late-arriving-refund actually adds a NEW late
+      # adjustment, not just "the build stayed green" (which a bug in
+      # fetch_late_adjustments() itself could satisfy without doing
+      # anything) — see scripts/generate_alert_report.py's
+      # --baseline-late-adjustments.
+      - name: Capture baseline late-adjustment count
+        id: baseline
+        run: |
+          uv run python scripts/generate_alert_report.py --json > baseline_alert.json
+          count=$(jq '.late_adjustments | length' baseline_alert.json)
+          echo "Baseline late_adjustments count: $count"
+          echo "count=$count" >> "$GITHUB_OUTPUT"
+
       - name: Inject failure — ${{ inputs.scenario }}
         run: uv run python scripts/inject_failure.py "${{ inputs.scenario }}"
 
@@ -140,6 +153,14 @@ jobs:
                 exit 1
               fi
               uv run python scripts/generate_alert_report.py --assert-scenario "$scenario"
+              ;;
+            late-arriving-refund)
+              # Also requires the late_adjustments count to have actually
+              # grown past the pre-injection baseline, not just "the build
+              # stayed green" — see check_scenario()'s own docstring for why
+              # that alone isn't a strong enough check.
+              uv run python scripts/generate_alert_report.py --assert-scenario "$scenario" \
+                --baseline-late-adjustments "${{ steps.baseline.outputs.count }}"
               ;;
             *)
               # Node-specific assertion, not just "did the build fail" — an

@@ -611,6 +611,28 @@ real numbers, in `docs/incidents/`.
    failing node's name, not just build/fail) — then re-running all nine
    scenarios against the real database to verify each fix, the same way
    every other claim in this phase was verified.
+6. **`recover_raw_table.py` would run `DROP TABLE ... CASCADE` against
+   any `schema.table`-shaped argument, not just the raw tables ingestion
+   actually owns.** A regex checking the *shape* of the input (letters,
+   underscore, one dot) is not the same as checking it's an *approved*
+   target — `analytics_marts.fct_orders` matches that shape just as well
+   as `raw.orders` does. Caught in review. Fixed by replacing the regex
+   with an explicit allowlist built from the same `TABLES`/`RAW_SCHEMA`
+   constants `scripts/ingest.py`/`ingest_billing.py`/`ingest_events.py`
+   already use (so the allowlist can't drift from what ingestion
+   actually owns), enforced via `argparse`'s own `choices` — an
+   unapproved table is now rejected before any DDL runs at all, not
+   pattern-matched and allowed through.
+7. **The `late-arriving-refund` scenario's automated check only proved
+   the build stayed green, not that anything actually happened.** A bug
+   in `fetch_late_adjustments()` itself, or in `is_late_adjustment`
+   upstream, could make the new refund silently fail to show up in the
+   alert while the build stayed green for the unrelated reason that
+   nothing broke *because nothing ran*. Caught in review. Fixed by
+   adding `--baseline-late-adjustments` to `generate_alert_report.py`:
+   the workflow now captures the `late_adjustments` count before
+   injecting, and the verification step requires it to have grown past
+   that baseline, not just checked that the build didn't fail.
 
 ## What's tested, and why
 
