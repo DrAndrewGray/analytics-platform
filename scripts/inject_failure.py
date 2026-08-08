@@ -23,7 +23,9 @@ from __future__ import annotations
 
 import argparse
 from collections.abc import Callable
+from pathlib import Path
 
+import pandas as pd
 from dotenv import load_dotenv
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
@@ -31,6 +33,26 @@ from sqlalchemy.engine import Engine
 from scripts.ingest import get_engine
 
 load_dotenv()
+
+SEEDS_DIR = Path(__file__).resolve().parent.parent / "dbt" / "seeds"
+
+
+def _latest_closed_period_end_date() -> str:
+    """The last date covered by a closed accounting period, read from the
+    checked-in seed CSV directly rather than a dbt-built table.
+
+    A dbt-built accounting_periods table lives in analytics_seeds (dev
+    target) or analytics_ci_seeds (ci target) — which one exists depends on
+    which target was last built, and scripts/inject_failure.py has no
+    business assuming either. The reliability-demo workflow only ever
+    builds `ci`; a local dev machine usually has `dev` built too. Reading
+    the CSV sidesteps the question entirely, at the cost of only being
+    correct for the checked-in seed, not a hand-edited live table — true
+    for every actual use of this script.
+    """
+    periods = pd.read_csv(SEEDS_DIR / "accounting_periods.csv")
+    closed = periods[periods["closed_at"].notna()]
+    return str(closed["period_end_date"].max())
 
 
 def scenario_drop_column(engine: Engine) -> str:
@@ -237,6 +259,7 @@ def scenario_source_stale(engine: Engine) -> str:
 
 def scenario_late_arriving_refund(engine: Engine) -> str:
     """Late-arriving data changes a closed period (a new refund against a closed invoice)."""
+    latest_closed_period_end = _latest_closed_period_end_date()
     with engine.begin() as conn:
         invoice = conn.execute(
             text(
@@ -244,10 +267,7 @@ def scenario_late_arriving_refund(engine: Engine) -> str:
                 SELECT i.invoice_id, p.payment_id
                 FROM raw_billing.invoices AS i
                 INNER JOIN raw_billing.payments AS p ON i.invoice_id = p.invoice_id
-                INNER JOIN analytics_seeds.accounting_periods AS periods
-                    ON i.invoice_date >= periods.period_start_date
-                    AND i.invoice_date <= periods.period_end_date
-                WHERE periods.closed_at IS NOT NULL
+                WHERE i.invoice_date <= :latest_closed_period_end
                 AND p.status = 'succeeded'
                 AND NOT EXISTS (
                     SELECT 1 FROM raw_billing.refunds AS r WHERE r.payment_id = p.payment_id
@@ -255,7 +275,8 @@ def scenario_late_arriving_refund(engine: Engine) -> str:
                 ORDER BY i.invoice_date DESC
                 LIMIT 1
                 """
-            )
+            ),
+            {"latest_closed_period_end": latest_closed_period_end},
         ).one()
         next_refund_id = conn.execute(
             text("SELECT max(refund_id) + 1 FROM raw_billing.refunds")

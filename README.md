@@ -633,6 +633,27 @@ real numbers, in `docs/incidents/`.
    the workflow now captures the `late_adjustments` count before
    injecting, and the verification step requires it to have grown past
    that baseline, not just checked that the build didn't fail.
+8. **`late-arriving-refund` itself failed outright the first time it ran
+   as an actual GitHub Actions workflow**, despite passing locally every
+   time it was tested. The scenario queried
+   `analytics_seeds.accounting_periods` — a table `dbt seed` creates
+   under a name that depends on which target was last built
+   (`analytics_seeds` for `dev`, `analytics_ci_seeds` for `ci`). Every
+   local run happened on a machine that already had `dev` built from
+   unrelated earlier work in this same phase, so the query always
+   resolved and the bug stayed invisible; `reliability-demo.yml` only
+   ever builds `ci`, so in GitHub Actions the table simply didn't exist.
+   The exact failure this whole phase exists to catch in *other*
+   people's pipelines, caught in its own tooling instead — by actually
+   running the workflow, not by re-reading the YAML. Fixed by reading
+   the checked-in `accounting_periods.csv` directly for the one fact the
+   scenario needs (the latest closed period's end date) instead of
+   querying a dbt-built table at all, so the scenario no longer depends
+   on which target — if any — happens to have been built. Verified by
+   reproducing the exact failure locally first (dropping the `dev`-target
+   seed schema to match what a `ci`-only environment actually looks
+   like), confirming the fix resolves it, then re-running the real
+   workflow in GitHub Actions to confirm.
 
 ## What's tested, and why
 

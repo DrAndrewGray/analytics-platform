@@ -1,6 +1,6 @@
 # Data health report
 
-Generated 2026-08-07 15:12 UTC by `scripts/generate_health_report.py`. This is a point-in-time snapshot, not a live dashboard — regenerate after any `dbt build` / `dbt source freshness` run. See docs/reliability_strategy.md for why this is a file, not a service.
+Generated 2026-08-08 06:40 UTC by `scripts/generate_health_report.py`. This is a point-in-time snapshot, not a live dashboard — regenerate after any `dbt build` / `dbt source freshness` run. See docs/reliability_strategy.md for why this is a file, not a service.
 
 ## Tests
 
