@@ -22,7 +22,7 @@ from typing import Any
 
 from sqlalchemy import text
 
-from scripts.generate_alert_report import fetch_late_adjustments
+from scripts.generate_alert_report import fetch_late_adjustments, resolve_marts_schema
 from scripts.ingest import get_engine
 
 TARGET_DIR = Path(__file__).resolve().parent.parent / "dbt" / "target"
@@ -81,12 +81,15 @@ def contracted_models(manifest: dict[str, Any] | None) -> list[str]:
 def fetch_volume_anomalies() -> list[dict[str, Any]] | None:
     try:
         engine = get_engine()
+        schema = resolve_marts_schema(engine, "mart_volume_anomalies")
+        if schema is None:
+            return None
         with engine.connect() as conn:
             rows = conn.execute(
                 text(
-                    """
+                    f"""
                     SELECT source_name, period_id, period_start_date, pct_change_vs_trailing_avg
-                    FROM analytics_marts.mart_volume_anomalies
+                    FROM {schema}.mart_volume_anomalies
                     WHERE is_anomaly
                     ORDER BY period_id DESC
                     """

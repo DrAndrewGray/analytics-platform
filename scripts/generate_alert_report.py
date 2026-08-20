@@ -50,9 +50,21 @@ from pathlib import Path
 from typing import Any
 
 from sqlalchemy import text
+from sqlalchemy.engine import Engine
 
 from scripts.impact_analysis import downstream_closure, summarize
 from scripts.ingest import get_engine
+
+# dbt builds marts under a schema name that depends on which target built
+# them (see dbt/profiles.yml): `analytics_marts` for `dev`,
+# `analytics_ci_marts` for `ci`. A script that queries a mart directly has
+# no business assuming either — resolve_marts_schema() below checks which
+# one actually exists instead. (This is the same class of bug
+# scripts/inject_failure.py's late-arriving-refund scenario had: it worked
+# on every local dev machine, which always had `dev` built from unrelated
+# earlier work, and failed the first time it ran in a `ci`-only
+# environment — see docs/incidents/ and the README's "Bugs this caught.")
+MARTS_SCHEMAS = ("analytics_marts", "analytics_ci_marts")
 
 TARGET_DIR = Path(__file__).resolve().parent.parent / "dbt" / "target"
 RUN_RESULTS_PATH = TARGET_DIR / "run_results.json"
@@ -141,16 +153,44 @@ def build_alert(manifest: dict[str, Any], run_results: dict[str, Any]) -> dict[s
     }
 
 
+def resolve_marts_schema(engine: Engine, table: str) -> str | None:
+    """Which of MARTS_SCHEMAS actually contains `table`, or None if neither does.
+
+    Prefers `analytics_marts` (the local dev target) over
+    `analytics_ci_marts` when both exist, since a human running this
+    locally almost always wants their own dev-target data over a leftover
+    ci build sitting in the same database.
+    """
+    with engine.connect() as conn:
+        found = {
+            row[0]
+            for row in conn.execute(
+                text(
+                    "select table_schema from information_schema.tables "
+                    "where table_schema = any(:schemas) and table_name = :table"
+                ),
+                {"schemas": list(MARTS_SCHEMAS), "table": table},
+            )
+        }
+    for schema in MARTS_SCHEMAS:
+        if schema in found:
+            return schema
+    return None
+
+
 def fetch_late_adjustments() -> list[dict[str, Any]] | None:
-    """Currently-open late period-close adjustments, or None if the DB isn't reachable."""
+    """Currently-open late period-close adjustments, or None if the DB/table isn't reachable."""
     try:
         engine = get_engine()
+        schema = resolve_marts_schema(engine, "fct_period_close_adjustments")
+        if schema is None:
+            return None
         with engine.connect() as conn:
             rows = conn.execute(
                 text(
-                    """
+                    f"""
                     SELECT refund_id, original_period_id, adjustment_period_id, days_after_close
-                    FROM analytics_marts.fct_period_close_adjustments
+                    FROM {schema}.fct_period_close_adjustments
                     WHERE is_late_adjustment
                     ORDER BY days_after_close DESC
                     """

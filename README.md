@@ -652,8 +652,29 @@ real numbers, in `docs/incidents/`.
    on which target — if any — happens to have been built. Verified by
    reproducing the exact failure locally first (dropping the `dev`-target
    seed schema to match what a `ci`-only environment actually looks
-   like), confirming the fix resolves it, then re-running the real
-   workflow in GitHub Actions to confirm.
+   like) and confirming the fix resolves it — then re-running the real
+   workflow in GitHub Actions surfaced a second, related bug (below), the
+   scenario itself no longer being the cause.
+9. **The same class of bug, in two more places, found by that same
+   re-run.** `generate_alert_report.py`'s `fetch_late_adjustments()` and
+   `generate_health_report.py`'s `fetch_volume_anomalies()` both
+   hardcoded `analytics_marts` — the *mart* schema's dev-target name,
+   same problem as bug 8, just one layer further along: the
+   `late-arriving-refund` scenario itself ran fine after that fix, but
+   the workflow's own "capture baseline" and "verify" steps, which call
+   these two functions, then failed trying to query a table that only
+   exists as `analytics_ci_marts` in that environment. Two hardcoded
+   instances of an identical mistake, made independently while building
+   two different scripts, is a pattern worth fixing structurally rather
+   than patching each call site again: added `resolve_marts_schema()`
+   (queries `information_schema.tables` for whichever of
+   `analytics_marts`/`analytics_ci_marts` actually contains the target
+   table, preferring the dev one when both exist) and routed both
+   functions through it. Verified the same way as bug 8 — reproduced
+   locally by dropping `analytics_marts` outright, confirmed both
+   functions correctly fall back to `analytics_ci_marts`, confirmed the
+   preference logic the other direction with both schemas present, then
+   re-ran the actual GitHub Actions workflow to confirm.
 
 ## What's tested, and why
 
