@@ -1,0 +1,231 @@
+version: 2
+
+# The governed metric catalog. Every metric here is `simple` (one
+# measure, one semantic model) or `derived` (a formula over other
+# metrics already defined here) — never a fresh aggregate against a raw
+# or staging model. See docs/metric_definitions_semantic.md for the full
+# catalog with formulas, grain, and the safe-to-combine matrix; this file
+# is the enforced version of that document, not a duplicate of it.
+
+metrics:
+  # --- Order-grain (for drill-down by channel — order_status/order_channel
+  # aren't dimensions on the period-grain revenue metrics above) ---
+  - name: order_revenue
+    description: >
+      fct_orders.order_amount, order grain — all statuses (fct_orders
+      itself keeps cancelled/refunded rows; filter on order_status the
+      same way any fct_orders consumer would). Distinct from
+      net_booked_revenue, which is period-grain, completed-only, and
+      combines both revenue lines — this exists specifically for
+      channel/status drill-down net_booked_revenue's own grain can't
+      provide.
+    type: simple
+    type_params:
+      measure: order_amount
+
+  - name: order_amount_collected
+    type: simple
+    type_params:
+      measure: amount_collected
+
+  # --- Revenue & cash (booking-period view) ---
+  - name: net_booked_revenue
+    description: Tax-exclusive booked revenue, retail + billing combined, by the period it was booked in.
+    type: simple
+    type_params:
+      measure: total_net_booked_revenue
+
+  - name: cash_collected_against_bookings
+    description: Cash collected against bookings made in the period — not cash that moved in the period (see cash_in/cash_out).
+    type: simple
+    type_params:
+      measure: total_collected_against_bookings
+
+  - name: booking_variance
+    description: net_booked_revenue minus cash_collected_against_bookings.
+    type: simple
+    type_params:
+      measure: variance
+
+  # --- Cash movement view ---
+  - name: cash_in
+    description: Cash inflows by the period the money actually moved (payment_date).
+    type: simple
+    type_params:
+      measure: total_cash_in
+
+  - name: cash_out
+    description: Cash outflows by the period the money actually moved (refund_date).
+    type: simple
+    type_params:
+      measure: total_cash_out
+
+  - name: net_cash_movement
+    description: cash_in minus cash_out.
+    type: simple
+    type_params:
+      measure: total_net_cash_movement
+
+  # --- Active customers ---
+  - name: active_customers
+    description: >
+      Distinct customers with a completed order or an active subscription
+      phase overlapping the period — see
+      int_active_customers_by_period.sql for the exact definition. The
+      one governed answer to "how many customers were active."
+    type: simple
+    type_params:
+      measure: active_customer_count
+
+  # --- MRR / ARR ---
+  - name: mrr
+    description: Closing MRR for the month.
+    type: simple
+    type_params:
+      measure: closing_mrr
+
+  - name: arr
+    description: mrr annualized (mrr * 12) — a naming convention, not a distinct measurement.
+    type: derived
+    type_params:
+      expr: mrr * 12
+      metrics:
+        - name: mrr
+
+  - name: opening_mrr
+    type: simple
+    type_params:
+      measure: opening_mrr
+
+  - name: churned_mrr
+    type: simple
+    type_params:
+      measure: churned_mrr
+
+  - name: contraction_mrr
+    type: simple
+    type_params:
+      measure: contraction_mrr
+
+  - name: expansion_mrr
+    type: simple
+    type_params:
+      measure: expansion_mrr
+
+  - name: churn_rate
+    description: >
+      churned_mrr / opening_mrr — same formula
+      mart_mrr_movements.gross_revenue_retention's complement uses (see
+      docs/metric_definitions_semantic.md); scripts/verify_semantic_layer.py
+      checks this against the mart directly.
+    type: derived
+    type_params:
+      expr: "case when opening_mrr > 0 then churned_mrr / opening_mrr end"
+      metrics:
+        - name: churned_mrr
+        - name: opening_mrr
+
+  - name: gross_revenue_retention
+    description: (opening_mrr - contraction_mrr - churned_mrr) / opening_mrr. Excludes expansion on purpose — can never exceed 100%.
+    type: derived
+    type_params:
+      expr: "case when opening_mrr > 0 then (opening_mrr - contraction_mrr - churned_mrr) / opening_mrr end"
+      metrics:
+        - name: opening_mrr
+        - name: contraction_mrr
+        - name: churned_mrr
+
+  - name: net_revenue_retention
+    description: (opening_mrr - contraction_mrr - churned_mrr + expansion_mrr) / opening_mrr. Includes expansion — can exceed 100%.
+    type: derived
+    type_params:
+      expr: >-
+        case when opening_mrr > 0
+        then (opening_mrr - contraction_mrr - churned_mrr + expansion_mrr) / opening_mrr
+        end
+      metrics:
+        - name: opening_mrr
+        - name: contraction_mrr
+        - name: churned_mrr
+        - name: expansion_mrr
+
+  # --- Retention (subscription cohorts) ---
+  - name: cohort_size
+    type: simple
+    type_params:
+      measure: cohort_size
+
+  - name: active_chain_count
+    type: simple
+    type_params:
+      measure: active_chain_count
+
+  - name: retention_rate
+    description: active_chain_count / cohort_size, by months_since_cohort_start.
+    type: derived
+    type_params:
+      expr: "case when cohort_size > 0 then active_chain_count / cohort_size end"
+      metrics:
+        - name: active_chain_count
+        - name: cohort_size
+
+  # --- Funnel conversion (same-day presence, not sequential — see mart_funnel_conversion) ---
+  - name: viewers
+    type: simple
+    type_params:
+      measure: viewers
+
+  - name: carters
+    type: simple
+    type_params:
+      measure: carters
+
+  - name: checkout_starters
+    type: simple
+    type_params:
+      measure: checkout_starters
+
+  - name: purchasers
+    type: simple
+    type_params:
+      measure: purchasers
+
+  - name: view_to_purchase_rate
+    description: purchasers / viewers, same day. Presence, not causation — see docs/metric_definitions_events.md.
+    type: derived
+    type_params:
+      expr: "case when viewers > 0 then purchasers / viewers end"
+      metrics:
+        - name: purchasers
+        - name: viewers
+
+  # --- Activation ---
+  - name: signups
+    description: Distinct customers who have ever signed up.
+    type: simple
+    type_params:
+      measure: signup_customer_count
+
+  - name: activated_customers
+    description: Distinct customers who purchased within 14 days of signup.
+    type: simple
+    type_params:
+      measure: signup_customer_count
+    filter: "{{ Dimension('customer_id__is_activated') }}"
+
+  - name: activation_rate
+    description: >
+      activated_customers / signups. Both inputs are count_distinct
+      measures — COUNT(DISTINCT ...) is bigint in Postgres, and
+      bigint / bigint truncates (integer division), unlike the other
+      ratio metrics here whose inputs are SUM() over already-numeric or
+      bigint mart columns (Postgres promotes SUM(bigint) to numeric,
+      which doesn't truncate — verified empirically, not assumed, since
+      that asymmetry is exactly what silently broke this metric before
+      the explicit cast below was added).
+    type: derived
+    type_params:
+      expr: "case when signups > 0 then activated_customers::numeric / signups end"
+      metrics:
+        - name: activated_customers
+        - name: signups

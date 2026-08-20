@@ -1,0 +1,19 @@
+version: 2
+
+models:
+  - name: int_active_customers_by_period
+    description: >
+      One row per (period, customer) pair where that customer was active
+      — the single governed source for the active_customers metric.
+      See docs/metric_definitions_semantic.md for the definition.
+    columns:
+      - name: period_id
+        tests:
+          - not_null
+      - name: customer_id
+        tests:
+          - not_null
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [period_id, customer_id]

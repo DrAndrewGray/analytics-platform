@@ -1,0 +1,77 @@
+version: 2
+
+semantic_models:
+  - name: sm_revenue_reconciliation
+    description: >
+      Booking-period revenue and cash-against-bookings, combined across
+      retail and billing — already reconciled in Phase 4, not re-derived
+      here. See mart_revenue_reconciliation_by_period's own description
+      for the booking-period vs. cash-movement distinction.
+    model: ref('mart_revenue_reconciliation_by_period')
+    defaults:
+      agg_time_dimension: period_start_date
+    entities:
+      - name: period_id
+        type: primary
+    dimensions:
+      - name: period_start_date
+        type: time
+        type_params:
+          time_granularity: month
+      - name: is_closed
+        type: categorical
+    measures:
+      - name: total_net_booked_revenue
+        description: Tax-exclusive booked revenue, retail + billing combined.
+        agg: sum
+        expr: total_net_booked_revenue
+      - name: total_collected_against_bookings
+        description: Cash collected against bookings made in the period (not cash that moved in it — see sm_cash_movements).
+        agg: sum
+        expr: total_collected_against_bookings
+      - name: total_tax_amount
+        agg: sum
+        expr: total_tax_amount
+      - name: variance
+        description: Booked revenue minus cash collected against those bookings.
+        agg: sum
+        expr: variance
+
+  - name: sm_cash_movements
+    description: >
+      Cash that actually moved in a period, by payment_date/refund_date
+      — the by-when-money-moved counterpart to sm_revenue_reconciliation.
+      Its accounting-period entity is named cash_movement_period, not
+      period_id: MetricFlow doesn't allow two semantic models to both
+      claim `period_id` as primary with the same period_start_date
+      dimension — accounting period is governed once, by
+      sm_revenue_reconciliation, not re-declared as a second "primary"
+      source of the same entity (which would be exactly the kind of
+      duplicate definition this phase exists to prevent). period_id
+      itself is still kept as a foreign entity below for anyone tracing
+      a row back to dim_accounting_periods; it just isn't this model's
+      primary grain key.
+    model: ref('mart_cash_movements_by_period')
+    defaults:
+      agg_time_dimension: period_start_date
+    entities:
+      - name: cash_movement_period
+        type: primary
+        expr: period_id
+      - name: period_id
+        type: foreign
+    dimensions:
+      - name: period_start_date
+        type: time
+        type_params:
+          time_granularity: month
+    measures:
+      - name: total_cash_in
+        agg: sum
+        expr: total_cash_in
+      - name: total_cash_out
+        agg: sum
+        expr: total_cash_out
+      - name: total_net_cash_movement
+        agg: sum
+        expr: total_net_cash_movement

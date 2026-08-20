@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Meridian Executive Scorecard</title>
+<style>
+  :root {
+    color-scheme: light;
+    --series-1: #2a78d6;
+    --series-2: #eb6834;
+    --series-3: #1baf7a;
+    --series-4: #eda100;
+    --surface: #fcfcfb;
+    --page: #f9f9f7;
+    --text-primary: #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted: #898781;
+    --gridline: #e1e0d9;
+    --baseline: #c3c2b7;
+    --border: rgba(11,11,11,0.10);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+    --series-1: #3987e5;
+    --series-2: #d95926;
+    --series-3: #199e70;
+    --series-4: #c98500;
+    --surface: #1a1a19;
+    --page: #0d0d0d;
+    --text-primary: #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted: #898781;
+    --gridline: #2c2c2a;
+    --baseline: #383835;
+    --border: rgba(255,255,255,0.10);
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --series-1: #3987e5;
+    --series-2: #d95926;
+    --series-3: #199e70;
+    --series-4: #c98500;
+    --surface: #1a1a19;
+    --page: #0d0d0d;
+    --text-primary: #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted: #898781;
+    --gridline: #2c2c2a;
+    --baseline: #383835;
+    --border: rgba(255,255,255,0.10);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 32px 24px 64px;
+    background: var(--page);
+    color: var(--text-primary);
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  h1 { font-size: 1.5rem; margin: 0 0 4px; }
+  .subtitle { color: var(--text-secondary); font-size: 0.875rem; margin: 0 0 32px; }
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px 24px;
+    margin-bottom: 24px;
+  }
+  .card h2 { font-size: 1rem; margin: 0 0 16px; color: var(--text-primary); }
+  .stat-row { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 24px; }
+  .stat-tile {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px 20px;
+    min-width: 160px;
+    flex: 1;
+  }
+  .stat-tile .label { font-size: 0.8125rem; color: var(--text-secondary); margin-bottom: 6px; }
+  .stat-tile .value { font-size: 1.75rem; font-weight: 600; color: var(--text-primary); }
+  .legend { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 12px; font-size: 0.8125rem; color: var(--text-secondary); }
+  .legend .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: middle; }
+  .chart-wrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.8125rem; }
+  th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--gridline); }
+  th { color: var(--text-secondary); font-weight: 500; }
+  td { color: var(--text-primary); }
+  details summary { cursor: pointer; color: var(--text-secondary); font-size: 0.8125rem; margin-top: 8px; }
+</style>
+</head>
+<body>
+<h1>Meridian Executive Scorecard</h1>
+<p class="subtitle">Generated 2026-08-20 06:42 UTC · every number below comes from <code>mf query</code> against the governed semantic layer — see docs/metric_definitions_semantic.md.</p>
+
+<div class="stat-row"><div class="stat-tile"><div class="label">Net booked revenue (latest closed period)</div><div class="value">$125,709</div></div><div class="stat-tile"><div class="label">Cash collected against bookings</div><div class="value">$116,129</div></div><div class="stat-tile"><div class="label">Active customers</div><div class="value">308</div></div><div class="stat-tile"><div class="label">MRR (latest month)</div><div class="value">$2,966</div></div><div class="stat-tile"><div class="label">Churn rate (latest month)</div><div class="value">4.2%</div></div><div class="stat-tile"><div class="label">Month-1 retention</div><div class="value">100.0%</div></div></div>
+<div class="card">
+  <h2>Net booked revenue — last 18 months</h2>
+  <div class="chart-wrap">
+<svg width="720" height="260" viewBox="0 0 720 260" role="img" aria-label="net_booked_revenue over time">
+  <line x1="56" y1="228.0" x2="704" y2="228.0" stroke="var(--gridline)" stroke-width="1"/><text x="48" y="232.0" text-anchor="end" font-size="11" fill="var(--text-muted)">$0</text><line x1="56" y1="122.0" x2="704" y2="122.0" stroke="var(--gridline)" stroke-width="1"/><text x="48" y="126.0" text-anchor="end" font-size="11" fill="var(--text-muted)">$65,598</text><line x1="56" y1="16.0" x2="704" y2="16.0" stroke="var(--gridline)" stroke-width="1"/><text x="48" y="20.0" text-anchor="end" font-size="11" fill="var(--text-muted)">$131,195</text>
+  <line x1="56" y1="228" x2="704" y2="228" stroke="var(--baseline)" stroke-width="1"/>
+  <path d="M 56.0 185.9 L 94.1 183.3 L 132.2 168.9 L 170.4 173.2 L 208.5 157.6 L 246.6 152.5 L 284.7 146.9 L 322.8 147.7 L 360.9 139.8 L 399.1 116.0 L 437.2 121.0 L 475.3 109.1 L 513.4 93.0 L 551.5 80.1 L 589.6 72.2 L 627.8 97.8 L 665.9 16.0 L 704.0 24.9" fill="none" stroke="var(--series-1)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="56.0" cy="185.9" r="4" fill="var(--series-1)"><title>2025-01: $26,081</title></circle><circle cx="94.1" cy="183.3" r="4" fill="var(--series-1)"><title>2025-02: $27,638</title></circle><circle cx="132.2" cy="168.9" r="4" fill="var(--series-1)"><title>2025-03: $36,551</title></circle><circle cx="170.4" cy="173.2" r="4" fill="var(--series-1)"><title>2025-04: $33,892</title></circle><circle cx="208.5" cy="157.6" r="4" fill="var(--series-1)"><title>2025-05: $43,577</title></circle><circle cx="246.6" cy="152.5" r="4" fill="var(--series-1)"><title>2025-06: $46,750</title></circle><circle cx="284.7" cy="146.9" r="4" fill="var(--series-1)"><title>2025-07: $50,217</title></circle><circle cx="322.8" cy="147.7" r="4" fill="var(--series-1)"><title>2025-08: $49,682</title></circle><circle cx="360.9" cy="139.8" r="4" fill="var(--series-1)"><title>2025-09: $54,563</title></circle><circle cx="399.1" cy="116.0" r="4" fill="var(--series-1)"><title>2025-10: $69,337</title></circle><circle cx="437.2" cy="121.0" r="4" fill="var(--series-1)"><title>2025-11: $66,230</title></circle><circle cx="475.3" cy="109.1" r="4" fill="var(--series-1)"><title>2025-12: $73,590</title></circle><circle cx="513.4" cy="93.0" r="4" fill="var(--series-1)"><title>2026-01: $83,559</title></circle><circle cx="551.5" cy="80.1" r="4" fill="var(--series-1)"><title>2026-02: $91,520</title></circle><circle cx="589.6" cy="72.2" r="4" fill="var(--series-1)"><title>2026-03: $96,442</title></circle><circle cx="627.8" cy="97.8" r="4" fill="var(--series-1)"><title>2026-04: $80,601</title></circle><circle cx="665.9" cy="16.0" r="4" fill="var(--series-1)"><title>2026-05: $131,195</title></circle><circle cx="704.0" cy="24.9" r="4" fill="var(--series-1)"><title>2026-06: $125,709</title></circle>
+  <text x="56.0" y="252" text-anchor="middle" font-size="11" fill="var(--text-muted)">2025-01</text><text x="170.4" y="252" text-anchor="middle" font-size="11" fill="var(--text-muted)">2025-04</text><text x="284.7" y="252" text-anchor="middle" font-size="11" fill="var(--text-muted)">2025-07</text><text x="399.1" y="252" text-anchor="middle" font-size="11" fill="var(--text-muted)">2025-10</text><text x="513.4" y="252" text-anchor="middle" font-size="11" fill="var(--text-muted)">2026-01</text><text x="627.8" y="252" text-anchor="middle" font-size="11" fill="var(--text-muted)">2026-04</text>
+</svg>
+</div>
+</div>
+<div class="card">
+  <h2>MRR — last 18 months with subscription activity</h2>
+  <div class="chart-wrap">
+<svg width="720" height="260" viewBox="0 0 720 260" role="img" aria-label="mrr over time">
+  <line x1="56" y1="228.0" x2="704" y2="228.0" stroke="var(--gridline)" stroke-width="1"/><text x="48" y="232.0" text-anchor="end" font-size="11" fill="var(--text-muted)">$0</text><line x1="56" y1="122.0" x2="704" y2="122.0" stroke="var(--gridline)" stroke-width="1"/><text x="48" y="126.0" text-anchor="end" font-size="11" fill="var(--text-muted)">$1,587</text><line x1="56" y1="16.0" x2="704" y2="16.0" stroke="var(--gridline)" stroke-width="1"/><text x="48" y="20.0" text-anchor="end" font-size="11" fill="var(--text-muted)">$3,173</text>
+  <line x1="56" y1="228" x2="704" y2="228" stroke="var(--baseline)" stroke-width="1"/>
+  <path d="M 56.0 176.5 L 94.1 171.1 L 132.2 163.6 L 170.4 157.6 L 208.5 150.1 L 246.6 142.2 L 284.7 140.0 L 322.8 129.9 L 360.9 116.6 L 399.1 98.1 L 437.2 85.9 L 475.3 77.0 L 513.4 64.9 L 551.5 33.9 L 589.6 16.7 L 627.8 16.0 L 665.9 21.1 L 704.0 29.9" fill="none" stroke="var(--series-3)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="56.0" cy="176.5" r="4" fill="var(--series-3)"><title>2025-03: $771</title></circle><circle cx="94.1" cy="171.1" r="4" fill="var(--series-3)"><title>2025-04: $852</title></circle><circle cx="132.2" cy="163.6" r="4" fill="var(--series-3)"><title>2025-05: $964</title></circle><circle cx="170.4" cy="157.6" r="4" fill="var(--series-3)"><title>2025-06: $1,053</title></circle><circle cx="208.5" cy="150.1" r="4" fill="var(--series-3)"><title>2025-07: $1,166</title></circle><circle cx="246.6" cy="142.2" r="4" fill="var(--series-3)"><title>2025-08: $1,284</title></circle><circle cx="284.7" cy="140.0" r="4" fill="var(--series-3)"><title>2025-09: $1,318</title></circle><circle cx="322.8" cy="129.9" r="4" fill="var(--series-3)"><title>2025-10: $1,469</title></circle><circle cx="360.9" cy="116.6" r="4" fill="var(--series-3)"><title>2025-11: $1,667</title></circle><circle cx="399.1" cy="98.1" r="4" fill="var(--series-3)"><title>2025-12: $1,945</title></circle><circle cx="437.2" cy="85.9" r="4" fill="var(--series-3)"><title>2026-01: $2,127</title></circle><circle cx="475.3" cy="77.0" r="4" fill="var(--series-3)"><title>2026-02: $2,260</title></circle><circle cx="513.4" cy="64.9" r="4" fill="var(--series-3)"><title>2026-03: $2,441</title></circle><circle cx="551.5" cy="33.9" r="4" fill="var(--series-3)"><title>2026-04: $2,906</title></circle><circle cx="589.6" cy="16.7" r="4" fill="var(--series-3)"><title>2026-05: $3,163</title></circle><circle cx="627.8" cy="16.0" r="4" fill="var(--series-3)"><title>2026-06: $3,173</title></circle><circle cx="665.9" cy="21.1" r="4" fill="var(--series-3)"><title>2026-07: $3,097</title></circle><circle cx="704.0" cy="29.9" r="4" fill="var(--series-3)"><title>2026-08: $2,966</title></circle>
+  <text x="56.0" y="252" text-anchor="middle" font-size="11" fill="var(--text-muted)">2025-03</text><text x="170.4" y="252" text-anchor="middle" font-size="11" fill="var(--text-muted)">2025-06</text><text x="284.7" y="252" text-anchor="middle" font-size="11" fill="var(--text-muted)">2025-09</text><text x="399.1" y="252" text-anchor="middle" font-size="11" fill="var(--text-muted)">2025-12</text><text x="513.4" y="252" text-anchor="middle" font-size="11" fill="var(--text-muted)">2026-03</text><text x="627.8" y="252" text-anchor="middle" font-size="11" fill="var(--text-muted)">2026-06</text>
+</svg>
+</div>
+</div>
+<details>
+  <summary>Reproduce this page</summary>
+  <p>uv run python scripts/generate_executive_scorecard.py — every query above is
+  <code>mf query --metrics ... --group-by ...</code>, listed in
+  docs/metric_definitions_semantic.md.</p>
+</details>
+
+</body>
+</html>

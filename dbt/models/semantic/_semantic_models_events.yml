@@ -1,0 +1,91 @@
+version: 2
+
+semantic_models:
+  - name: sm_products
+    description: Governed product dimension.
+    model: ref('dim_products')
+    entities:
+      - name: product_id
+        type: primary
+    dimensions:
+      - name: category
+        type: categorical
+      - name: is_active
+        type: categorical
+
+  - name: sm_funnel_conversion
+    description: >
+      Same-day presence funnel, one row per activity date — see
+      mart_funnel_conversion's own description for why this is
+      same-day presence, not a sequential funnel.
+    model: ref('mart_funnel_conversion')
+    defaults:
+      agg_time_dimension: activity_date
+    entities:
+      - name: funnel_activity_date
+        type: primary
+        expr: "activity_date"
+    dimensions:
+      - name: activity_date
+        type: time
+        type_params:
+          time_granularity: day
+    measures:
+      - name: viewers
+        agg: sum
+        expr: viewers
+      - name: carters
+        agg: sum
+        expr: carters
+      - name: checkout_starters
+        agg: sum
+        expr: checkout_starters
+      - name: purchasers
+        agg: sum
+        expr: purchasers
+
+  - name: sm_activation
+    description: >
+      One row per customer who has ever signed up — is_activated:
+      purchased within 14 days of signup.
+    model: ref('mart_activation')
+    defaults:
+      agg_time_dimension: first_signup_date
+    entities:
+      - name: customer_id
+        type: primary
+    dimensions:
+      - name: first_signup_date
+        type: time
+        type_params:
+          time_granularity: day
+        expr: "first_signup_at::date"
+      - name: is_activated
+        type: categorical
+    measures:
+      - name: signup_customer_count
+        description: Count of customers who have ever signed up (unfiltered) — the `signups` and `activated_customers` metrics both read this, one with a filter, one without.
+        agg: count_distinct
+        expr: customer_id
+
+  - name: sm_active_customers
+    description: >
+      Governed source for the active_customers metric — see
+      int_active_customers_by_period.sql for the definition (completed
+      order OR active subscription phase overlapping the period).
+    model: ref('int_active_customers_by_period')
+    defaults:
+      agg_time_dimension: period_start_date
+    primary_entity: customer_id
+    entities:
+      - name: customer_id
+        type: foreign
+    dimensions:
+      - name: period_start_date
+        type: time
+        type_params:
+          time_granularity: month
+    measures:
+      - name: active_customer_count
+        agg: count_distinct
+        expr: customer_id

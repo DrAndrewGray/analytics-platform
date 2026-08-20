@@ -1,10 +1,10 @@
 # Data health report
 
-Generated 2026-08-20 05:31 UTC by `scripts/generate_health_report.py`. This is a point-in-time snapshot, not a live dashboard — regenerate after any `dbt build` / `dbt source freshness` run. See docs/reliability_strategy.md for why this is a file, not a service.
+Generated 2026-08-20 06:42 UTC by `scripts/generate_health_report.py`. This is a point-in-time snapshot, not a live dashboard — regenerate after any `dbt build` / `dbt source freshness` run. See docs/reliability_strategy.md for why this is a file, not a service.
 
 ## Tests
 
-- **pass**: 196
+- **pass**: 199
 
 ## Source freshness
 

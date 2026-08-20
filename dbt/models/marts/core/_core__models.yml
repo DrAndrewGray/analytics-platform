@@ -19,8 +19,11 @@ models:
 
   - name: dim_date
     description: Calendar date spine from 2023-01-01 through one year ahead of today.
+    time_spine:
+      standard_granularity_column: date_day
     columns:
       - name: date_day
+        granularity: day
         tests:
           - unique
           - not_null

@@ -1,0 +1,105 @@
+version: 2
+
+semantic_models:
+  - name: sm_plans
+    description: Governed plan dimension (Meridian+ membership plans).
+    model: ref('dim_plans')
+    entities:
+      - name: plan_id
+        type: primary
+    dimensions:
+      - name: plan_name
+        type: categorical
+      - name: billing_interval
+        type: categorical
+
+  - name: sm_invoices
+    description: >
+      Billing invoices, invoice grain. Same recognized-value-vs-cash
+      split as fct_orders — invoice_amount is booked, net_collected_amount
+      is cash.
+    model: ref('fct_invoices')
+    defaults:
+      agg_time_dimension: invoice_date
+    entities:
+      - name: invoice_id
+        type: primary
+      - name: customer_id
+        type: foreign
+      - name: subscription_id
+        type: foreign
+    dimensions:
+      - name: invoice_date
+        type: time
+        type_params:
+          time_granularity: day
+    measures:
+      - name: invoice_amount
+        agg: sum
+        expr: invoice_amount
+      - name: net_collected_amount
+        agg: sum
+        expr: net_collected_amount
+
+  - name: sm_mrr_movements
+    description: >
+      The MRR bridge, one row per month — already reconciled in Phase 2
+      (assert_mrr_bridge_reconciles.sql), not re-derived here.
+    model: ref('mart_mrr_movements')
+    defaults:
+      agg_time_dimension: activity_month
+    entities:
+      - name: mrr_movements_month
+        type: primary
+        expr: "activity_month"
+    dimensions:
+      - name: activity_month
+        type: time
+        type_params:
+          time_granularity: month
+    measures:
+      - name: opening_mrr
+        agg: sum
+        expr: opening_mrr
+      - name: new_mrr
+        agg: sum
+        expr: new_mrr
+      - name: expansion_mrr
+        agg: sum
+        expr: expansion_mrr
+      - name: reactivation_mrr
+        agg: sum
+        expr: reactivation_mrr
+      - name: contraction_mrr
+        agg: sum
+        expr: contraction_mrr
+      - name: churned_mrr
+        agg: sum
+        expr: churned_mrr
+      - name: closing_mrr
+        agg: sum
+        expr: closing_mrr
+
+  - name: sm_retention_cohorts
+    description: Monthly signup cohorts tracked forward, subscription retention.
+    model: ref('mart_retention_cohorts')
+    defaults:
+      agg_time_dimension: cohort_month
+    entities:
+      - name: retention_cohort
+        type: primary
+        expr: "cohort_month || '-' || months_since_cohort_start"
+    dimensions:
+      - name: cohort_month
+        type: time
+        type_params:
+          time_granularity: month
+      - name: months_since_cohort_start
+        type: categorical
+    measures:
+      - name: cohort_size
+        agg: sum
+        expr: cohort_size
+      - name: active_chain_count
+        agg: sum
+        expr: active_chain_count

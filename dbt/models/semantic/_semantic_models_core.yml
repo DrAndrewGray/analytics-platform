@@ -1,0 +1,55 @@
+version: 2
+
+semantic_models:
+  - name: sm_customers
+    description: >
+      Governed customer dimension. Every other semantic model's
+      customer_id entity resolves against this one — region and country
+      are defined here once, not re-derived per domain.
+    model: ref('dim_customers')
+    defaults:
+      agg_time_dimension: signup_date
+    entities:
+      - name: customer_id
+        type: primary
+    dimensions:
+      - name: signup_date
+        type: time
+        type_params:
+          time_granularity: day
+      - name: region
+        type: categorical
+      - name: country
+        type: categorical
+
+  - name: sm_orders
+    description: >
+      Retail orders, order grain. Booked revenue lives here as
+      order_amount — see fct_orders' own description for why cancelled/
+      refunded orders are kept, not filtered, at this layer.
+    model: ref('fct_orders')
+    defaults:
+      agg_time_dimension: order_date
+    entities:
+      - name: order_id
+        type: primary
+      - name: customer_id
+        type: foreign
+    dimensions:
+      - name: order_date
+        type: time
+        type_params:
+          time_granularity: day
+      - name: order_status
+        type: categorical
+      - name: order_channel
+        type: categorical
+    measures:
+      - name: order_amount
+        description: Booked order revenue (all statuses — filter on order_status for recognized revenue).
+        agg: sum
+        expr: order_amount
+      - name: amount_collected
+        description: Cash actually collected against orders.
+        agg: sum
+        expr: amount_collected

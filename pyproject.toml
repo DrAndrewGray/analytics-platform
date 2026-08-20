@@ -19,6 +19,7 @@ dev = [
     "pyright>=1.1.400",
     "sqlfluff>=3.0.0",
     "pytest>=8.0.0",
+    "dbt-metricflow>=0.14.0",
 ]
 
 [tool.pytest.ini_options]
@@ -31,6 +32,13 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.per-file-ignores]
+# Embedded SVG/CSS template strings, not Python control flow -- wrapping a
+# single <rect .../> or CSS custom-property line to satisfy an 80/100-col
+# rule fragments markup for no readability gain, unlike every other file
+# in this project where the line-length rule is doing real work.
+"scripts/bi_common.py" = ["E501"]
 
 [build-system]
 requires = ["hatchling"]

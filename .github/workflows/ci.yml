@@ -90,3 +90,23 @@ jobs:
       - name: dbt source freshness
         working-directory: dbt
         run: uv run dbt source freshness --profiles-dir . --target ci
+
+      # dbt build above already leaves target/manifest.json (and the
+      # semantic manifest mf reads) resolved against the `ci` target's
+      # schemas -- confirmed empirically that `mf query` follows whichever
+      # target the manifest was last built/parsed against, not a
+      # `--target`/`DBT_TARGET` override at query time (neither exists /
+      # neither works). Re-parsing here would be redundant; noted so a
+      # future edit doesn't "fix" this into two profiles pointing at two
+      # different schemas.
+      - name: Validate the semantic layer (mf validate-configs)
+        working-directory: dbt
+        run: uv run mf validate-configs
+
+      - name: Verify governed metrics reconcile with their source marts
+        run: uv run python scripts/verify_semantic_layer.py
+
+      - name: Generate the two BI outputs (smoke test)
+        run: |
+          uv run python scripts/generate_executive_scorecard.py
+          uv run python scripts/generate_operational_dashboard.py

@@ -153,13 +153,13 @@ def build_alert(manifest: dict[str, Any], run_results: dict[str, Any]) -> dict[s
     }
 
 
-def resolve_marts_schema(engine: Engine, table: str) -> str | None:
-    """Which of MARTS_SCHEMAS actually contains `table`, or None if neither does.
+def resolve_schema(engine: Engine, table: str, candidate_schemas: tuple[str, ...]) -> str | None:
+    """Which of candidate_schemas actually contains `table`, or None if none do.
 
-    Prefers `analytics_marts` (the local dev target) over
-    `analytics_ci_marts` when both exist, since a human running this
-    locally almost always wants their own dev-target data over a leftover
-    ci build sitting in the same database.
+    Earlier entries in candidate_schemas win when more than one contains
+    the table — callers order their tuple dev-target-first, since a human
+    running this locally almost always wants their own dev-target data
+    over a leftover ci build sitting in the same database.
     """
     with engine.connect() as conn:
         found = {
@@ -169,13 +169,18 @@ def resolve_marts_schema(engine: Engine, table: str) -> str | None:
                     "select table_schema from information_schema.tables "
                     "where table_schema = any(:schemas) and table_name = :table"
                 ),
-                {"schemas": list(MARTS_SCHEMAS), "table": table},
+                {"schemas": list(candidate_schemas), "table": table},
             )
         }
-    for schema in MARTS_SCHEMAS:
+    for schema in candidate_schemas:
         if schema in found:
             return schema
     return None
+
+
+def resolve_marts_schema(engine: Engine, table: str) -> str | None:
+    """Which of MARTS_SCHEMAS (analytics_marts / analytics_ci_marts) has `table`."""
+    return resolve_schema(engine, table, MARTS_SCHEMAS)
 
 
 def fetch_late_adjustments() -> list[dict[str, Any]] | None:

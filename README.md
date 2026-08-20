@@ -11,15 +11,19 @@ product-event analytics (browsing, identity resolution, funnels) on top
 of both. **Phase 4** adds a finance/reconciliation layer across both
 revenue lines. **Phase 5** adds a reliability lab around all of it —
 contracts, anomaly detection, and worked incidents proving the controls
-actually catch something. Each extends the same warehouse rather than
-starting a new project; see [Phase 2](#phase-2-meridian-subscriptions),
+actually catch something. **Phase 6** adds a governed semantic layer
+(dbt's own Semantic Layer/MetricFlow) so two dashboards querying
+"revenue" or "active customer" can't quietly disagree about what those
+words mean. Each extends the same warehouse rather than starting a new
+project; see [Phase 2](#phase-2-meridian-subscriptions),
 [Phase 3](#phase-3-product-events),
-[Phase 4](#phase-4-finance-and-revenue-reconciliation), and
-[Phase 5](#phase-5-data-contracts-and-observability) below. Later
-phases add a semantic layer, a reusable Python ingestion framework, and
-a benchmark-evaluated AI copilot — each either folded in here or
-extracted into its own repo once the technical story is genuinely
-different, not just a different dataset with the same shape.
+[Phase 4](#phase-4-finance-and-revenue-reconciliation),
+[Phase 5](#phase-5-data-contracts-and-observability), and
+[Phase 6](#phase-6-semantic-layer-and-self-service-bi) below. Later
+phases add a reusable Python ingestion framework, a scientific analytics
+warehouse, and a benchmark-evaluated AI copilot — each extracted into
+its own repo once the technical story is genuinely different, not just
+a different dataset with the same shape.
 
 ## Architecture
 
@@ -44,6 +48,13 @@ Reliability (Phase 5):
   scripts/inject_failure.py --> real DDL/DML against the schemas above --> dbt build
   scripts/generate_alert_report.py / impact_analysis.py / check_source_schema.py / generate_health_report.py
   (read dbt's own artifacts + the live warehouse; no separate monitoring service)
+
+Semantic layer (Phase 6):
+  dbt/models/semantic/*.yml (semantic_models + metrics) --> mf query (MetricFlow CLI)
+  scripts/generate_executive_scorecard.py / generate_operational_dashboard.py --> docs/bi/*.html
+  (both BI outputs, and scripts/verify_semantic_layer.py's reconciliation
+  checks, only ever read a governed number through `mf query` — never a
+  hand-written SQL aggregate)
 ```
 
 Three source schemas, not one: each domain is modeled as a genuinely
@@ -676,6 +687,139 @@ real numbers, in `docs/incidents/`.
    preference logic the other direction with both schemas present, then
    re-ran the actual GitHub Actions workflow to confirm.
 
+## Phase 6: semantic layer and self-service BI
+
+Full design rationale lives in
+[`docs/semantic_layer_strategy.md`](docs/semantic_layer_strategy.md);
+the full metric catalog, formulas, and safe-to-combine matrix are in
+[`docs/metric_definitions_semantic.md`](docs/metric_definitions_semantic.md).
+The short version:
+
+**The demonstration this phase exists to make: two consumers can't
+independently redefine "revenue" or "active customer."** Every metric
+is defined exactly once, in `dbt/models/semantic/*.yml`
+(`semantic_models:` + `metrics:`), validated against the real warehouse
+by `mf validate-configs`, and queried through `mf query` — the
+MetricFlow CLI (`dbt-metricflow`), dbt's own Semantic Layer primitive,
+not a hand-rolled parallel "metrics" concept. Both BI outputs and the
+reconciliation test read a governed number the exact same way; there is
+no code path in this repo where a script types `sum(order_amount)` for
+"revenue" instead of asking MetricFlow for `net_booked_revenue`.
+
+**Every semantic model sits on an already-tested mart, never a raw or
+staging table.** `net_booked_revenue`, `cash_collected_against_bookings`
+reuse Phase 4's `mart_revenue_reconciliation_by_period` directly;
+`mrr`/`churn_rate`/`gross_revenue_retention`/`net_revenue_retention`
+reuse Phase 2's already-reconciled `mart_mrr_movements`
+(`assert_mrr_bridge_reconciles.sql`) without recomputing the bridge.
+The one new model this phase adds,
+`int_active_customers_by_period.sql`, exists because "how many
+customers were active" — a completed order *or* an active subscription
+phase overlapping the period, engaged with both counts once — never had
+a single governed source anywhere in the warehouse before; Phase 2's
+`mart_customer_metrics.is_currently_active` is point-in-time and
+subscription-only, not what this phase needed.
+
+**The "safe to combine" boundary is enforced, not just documented.**
+Confirmed concretely: `active_customers` grouped by `customer_id__region`
+returns real per-region counts even though `int_active_customers_by_period`
+has no region column at all — the dimension comes entirely from a join
+to the governed customer dimension (`sm_customers`) through a shared
+entity. Attempting `mrr` grouped by `customer_id__region` fails outright
+(`sm_mrr_movements` has no customer entity) — that failure is the
+enforcement mechanism, not a courtesy message, and it showed up for
+real while building the executive scorecard itself (see "Bugs this
+caught," below) before it ever made it into documentation.
+
+**Reconciliation, the same discipline as Phase 4/5's own tests.**
+`scripts/verify_semantic_layer.py` queries each governed metric via
+`mf query` and compares it row-for-row against a direct SQL query of
+its own source mart — 7 metrics, hundreds of periods, all matching.
+
+**Two thin BI outputs, same definitions, different audiences.**
+`docs/bi/executive_scorecard.html` (headline KPIs, one page) and
+`docs/bi/operational_dashboard.html` (channel/region/funnel/cohort
+drill-down) are generated static files, not a hosted dashboard tool —
+same "no new infrastructure" reasoning as Phase 5's own health report.
+Both are checked-in and regenerated on demand
+(`uv run python scripts/generate_executive_scorecard.py` /
+`generate_operational_dashboard.py`), and both only ever call
+`scripts/bi_common.mf_query()`.
+
+### Bugs this caught
+
+1. **`activation_rate` returned `0` instead of `~0.98`.** Both inputs
+   (`activated_customers`, `signups`) are `count_distinct` measures, and
+   `COUNT(DISTINCT ...)` is `bigint` in Postgres — `bigint / bigint`
+   truncates (integer division). The other ratio metrics here
+   (`churn_rate`, `retention_rate`, `view_to_purchase_rate`) didn't hit
+   this because their inputs are `sum()` over already-`numeric` or
+   `bigint` mart columns, and Postgres promotes `SUM(bigint)` to
+   `numeric`, which divides correctly — confirmed by checking the actual
+   generated SQL (`mf query --explain`), not assumed. Fixed with one
+   explicit `::numeric` cast in the metric that needed it.
+2. **Two semantic models couldn't both declare `period_id` as their
+   primary entity with an identically-named `period_start_date`
+   dimension** — MetricFlow rejects that outright
+   (`Duplicate dimension + primary entity pairing detected`). This
+   surfaced while wiring `sm_cash_movements` alongside
+   `sm_revenue_reconciliation`, and it's the mechanism working as
+   intended: accounting period is governed once
+   (`sm_revenue_reconciliation` owns the `period_id` primary entity),
+   not redeclared. `sm_cash_movements` keeps its own local
+   `cash_movement_period` primary entity (so its own measures still
+   have a time dimension to aggregate by) plus a `period_id` *foreign*
+   entity purely for traceability back to the governed one.
+3. **The executive scorecard's own first draft tried to query
+   `net_booked_revenue`, `cash_collected_against_bookings`, and
+   `active_customers` together in one `mf query`, grouped by
+   `period_id__is_closed`.** It failed — `active_customers` has no
+   `is_closed` dimension, because its source
+   (`int_active_customers_by_period`) doesn't share
+   `sm_revenue_reconciliation`'s grain. This is the exact "safe to
+   combine" boundary `docs/metric_definitions_semantic.md` documents,
+   showing up in this phase's own code before it ever made it into the
+   reference doc. Fixed by querying `active_customers` separately and
+   merging in Python — the correct pattern, not a workaround.
+4. **The same executive scorecard chart then quietly implied a revenue
+   crash that never happened.** Plotting the last 18 months unfiltered
+   put the current, still-accumulating accounting period at the end of
+   the trend line — a period that's mechanically low because it isn't
+   over yet, not because revenue fell. Caught by reading the actual
+   plotted values, not assumed correct because the query ran. Fixed by
+   filtering the revenue trend to `is_closed` periods only, the same
+   convention Phase 5's volume-anomaly check already applies to this
+   dataset. Checked whether `mrr`'s trend had the same problem before
+   applying the same fix there too — it didn't (MRR is a point-in-time
+   snapshot, not an accumulation), so it was deliberately left alone
+   rather than "fixed" defensively for a problem it doesn't have.
+5. **`scripts/inject_failure.py`'s and `scripts/generate_alert_report.py`'s
+   own dev/ci schema-name bug (see Phase 5's "Bugs this caught") turned
+   out to have a third instance, in code written *for this phase*.**
+   `scripts/verify_semantic_layer.py`'s reconciliation queries hardcoded
+   `analytics_marts`/`analytics_intermediate` directly — exactly the
+   pattern that broke `late-arriving-refund` the first time it ran in a
+   ci-only environment. Caught by deliberately reproducing that same
+   environment locally (dropping `analytics_marts` outright) while
+   testing this phase's own CI wiring, before ever pushing it. Fixed by
+   generalizing Phase 5's `resolve_marts_schema()` into a reusable
+   `resolve_schema()` and routing every hardcoded schema reference in
+   this phase's scripts through it, rather than writing a fourth
+   one-off fix.
+6. **`raw_events.events.customer_id`/`product_id`/`order_id` were
+   `double precision`, not `bigint`** — the same nullable-integer-becomes-
+   float pandas upcast this project has fixed repeatedly for money
+   columns (Phase 4), this time on foreign keys. Found while grounding
+   semantic-layer entity definitions in the actual mart schemas:
+   `mart_activation.customer_id` showing up as `double precision` was
+   the tell. Never caused visible drift since Phase 3 — nothing sums an
+   ID — but it mattered concretely here: MetricFlow joins semantic
+   models on `customer_id` as an entity, and that join should be
+   `bigint` to `bigint` against `fct_orders`/`dim_customers`, not float
+   to `bigint`. Fixed by casting all three columns at the staging
+   boundary (`stg_events__events.sql`), the same layer every other
+   type-correctness fix in this project lives at.
+
 ## What's tested, and why
 
 - **Referential integrity** (`relationships` tests) between orders,
@@ -786,6 +930,15 @@ real numbers, in `docs/incidents/`.
   primitive is model-level only. Runs in `ci.yml` right after ingestion
   on every push, not just on demand — otherwise the snapshot itself
   could drift out of sync with the generators unnoticed.
+- **`mf validate-configs`** — validates every semantic model, dimension,
+  entity, and metric against the live warehouse (not just YAML syntax);
+  runs in `ci.yml` right after `dbt build --target ci`, since that's
+  what leaves the manifest `mf` reads resolved against the `ci` schemas.
+- **`scripts/verify_semantic_layer.py`** — independently recomputes 7
+  governed metrics directly from their source marts and compares against
+  `mf query`'s own output, the same discipline as Phase 4/5's
+  `assert_*_matches_source_facts.sql` tests, applied to the semantic
+  layer. Runs in `ci.yml` on every push.
 
 ## Running it locally
 
@@ -820,11 +973,29 @@ uv run dbt build --profiles-dir .
 # 6. Explore the docs
 uv run dbt docs generate --profiles-dir .
 uv run dbt docs serve --profiles-dir .
+
+# 7. Query the governed semantic layer (Phase 6)
+uv run mf list metrics                                 # every metric + its valid dimensions
+uv run mf query --metrics net_booked_revenue --group-by metric_time__month
+uv run mf validate-configs                              # validate against the live warehouse
+
+# 8. Reconcile the semantic layer and regenerate the BI outputs
+cd ..
+uv run python scripts/verify_semantic_layer.py
+uv run python scripts/generate_executive_scorecard.py    # -> docs/bi/executive_scorecard.html
+uv run python scripts/generate_operational_dashboard.py  # -> docs/bi/operational_dashboard.html
 ```
 
 `dbt build` runs seeds, models, tests, and snapshots together, in dependency
 order — if a test on `stg_orders` fails, downstream marts that depend on
 it are skipped rather than built on top of bad data.
+
+`mf` (from the `dbt-metricflow` dev dependency) always resolves against
+whichever target `dbt/target/manifest.json` was last built/parsed for —
+there's no `--target` flag on `mf` itself, so after building the `ci`
+target for any reason, re-run `dbt build --profiles-dir .` (no
+`--target`) before querying locally, or `mf` will (correctly) resolve
+against the `ci` schemas instead of `dev`'s.
 
 ## Tooling
 
@@ -844,6 +1015,9 @@ it are skipped rather than built on top of bad data.
   which Postgres refuses once a dbt view depends on it — ingestion now
   truncates instead, and the test recreates that exact scenario to guard
   against it coming back.
+- **dbt-metricflow** — dbt's Semantic Layer CLI (`uv run mf ...`),
+  installed as a dev dependency. Works entirely locally against the same
+  Postgres `profiles.yml` already defines — no dbt Cloud account needed.
 
 ## Environments
 
@@ -863,9 +1037,12 @@ the retail, billing, and event synthetic data fresh (so source freshness
 checks always pass), runs `scripts/check_source_schema.py` against the
 freshly-ingested data (so the checked-in schema snapshot can't silently
 drift out of sync with what the generators actually produce), runs the
-Python test suite, then runs `dbt build` against the `ci` target on
-every push — the warehouse either builds and passes its tests, or the
-check fails. See `.github/workflows/ci.yml`.
+Python test suite, then runs `dbt build` and `dbt source freshness`
+against the `ci` target, `mf validate-configs`, and
+`scripts/verify_semantic_layer.py` (with both BI outputs regenerated as
+a smoke test) on every push — the warehouse either builds, passes its
+tests, and reconciles its governed metrics, or the check fails. See
+`.github/workflows/ci.yml`.
 
 A second, manually-triggered workflow
 (`.github/workflows/reliability-demo.yml`) exists specifically to break
@@ -886,13 +1063,16 @@ gate normal work should have to pass.
 ## Roadmap
 
 Phase 1 (retail), Phase 2 (Meridian+ subscriptions), Phase 3 (product
-events), Phase 4 (finance and revenue reconciliation), and Phase 5
-(data contracts and observability) are all done. Next up, per the
-original plan: a semantic layer (extending this same warehouse), a
-reusable Python ingestion framework, a scientific analytics warehouse,
-and a benchmark-evaluated AI copilot — each extracted into its own repo
-once it has a technical story genuinely different from what's here, not
-just a different dataset with the same shape.
+events), Phase 4 (finance and revenue reconciliation), Phase 5 (data
+contracts and observability), and Phase 6 (semantic layer and
+self-service BI) are all done. Next up, per the updated plan: a reusable
+Python ingestion framework, a scientific analytics warehouse (likely
+DuckDB/Parquet), and a benchmark-evaluated analytics copilot — each its
+own repo, integrating back into this one as the final flagship
+(`ingestion → warehouse/dbt → semantic layer → BI → observability →
+evaluated assistant`) once each has a technical story genuinely
+different from what's here, not just a different dataset with the same
+shape.
 
 [`docs/roadmap/phase_2_subscription_spec.md`](docs/roadmap/phase_2_subscription_spec.md)
 is kept as a historical record of the original Phase 2 spec — the actual
